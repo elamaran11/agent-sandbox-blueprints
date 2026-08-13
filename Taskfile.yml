@@ -145,20 +145,35 @@ tasks:
   demo-kata:
     desc: Deploy the Dark Factory pipeline on Kata
     cmds:
-      - |
-        [ -f examples/dark-factory-kata/values.yaml ] || {
-          echo "MISSING examples/dark-factory-kata/values.yaml — copy values.example.yaml"; exit 1; }
-      - kubectl apply -f examples/dark-factory-kata/bootstrap/
-      - echo "✓ label a GitHub issue to start a run"
+      - task: demo
+        vars: { EXAMPLE: dark-factory-kata }
 
   demo-lambda:
     desc: Deploy the Dark Factory pipeline on Lambda MicroVM
     cmds:
+      - task: demo
+        vars: { EXAMPLE: dark-factory-lambda }
+
+  demo:
+    internal: true
+    # These are Helm charts, not plain manifests — the pipeline templates are
+    # heavily parameterized, so they must be rendered before they can be applied.
+    # defaults.yaml carries the committed chart defaults; your values.yaml
+    # (gitignored) layers your repo, token Secret name, labels and gates on top.
+    cmds:
       - |
-        [ -f examples/dark-factory-lambda/values.yaml ] || {
-          echo "MISSING examples/dark-factory-lambda/values.yaml — copy values.example.yaml"; exit 1; }
-      - kubectl apply -f examples/dark-factory-lambda/bootstrap/
-      - echo "✓ label a GitHub issue to start a run"
+        EX="examples/{{.EXAMPLE}}"
+        if [ ! -f "$EX/values.yaml" ]; then
+          echo "MISSING $EX/values.yaml"
+          echo "  cp $EX/values.example.yaml $EX/values.yaml   # then edit it"
+          exit 1
+        fi
+        helm dependency build "$EX" >/dev/null
+        helm template {{.EXAMPLE}} "$EX" \
+          -f "$EX/defaults.yaml" \
+          -f "$EX/values.yaml" \
+          | kubectl apply -f -
+      - 'echo "✓ pipeline deployed — add the trigger label to a GitHub issue to start a run"'
 
   # ── Hygiene ─────────────────────────────────────────────────────────────────
   lint:
