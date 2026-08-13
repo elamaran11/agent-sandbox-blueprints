@@ -76,7 +76,7 @@ tasks:
       - task: tf:apply
       - task: kubeconfig
       - task: gitops:bootstrap
-      - echo "✓ platform ready — next: 'task kata' and/or 'task lambda'"
+      - 'echo "✓ platform ready — next run: task kata and/or task lambda"'
 
   tf:init:
     desc: terraform init
