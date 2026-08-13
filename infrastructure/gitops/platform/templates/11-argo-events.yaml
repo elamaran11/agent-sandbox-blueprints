@@ -1,0 +1,50 @@
+{{- if .Values.argoEvents.enabled }}
+{{- /*
+Argo Events — turns a GitHub webhook into a Workflow submission.
+
+Chain: GitHub webhook → EventSource → EventBus (NATS/JetStream) → Sensor →
+submit Workflow. The examples ship the EventSource and Sensor; this Application
+installs the controllers and the EventBus they need.
+
+Operational note that has bitten before: if the EventBus is restarted, Sensors
+can end up with stale JetStream consumers and silently stop triggering. Symptom:
+webhooks arrive, no Workflow is created. See docs/TROUBLESHOOTING.md.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-events
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.argoEvents.chart.repoURL | quote }}
+    chart: {{ .Values.argoEvents.chart.name | quote }}
+    targetRevision: {{ .Values.argoEvents.chart.version | quote }}
+    helm:
+      releaseName: argo-events
+      valuesObject:
+        # The chart can create a default EventBus for us; the examples assume
+        # one named "default" exists in this namespace.
+        installValidatingWebhook: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.argoEvents.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}

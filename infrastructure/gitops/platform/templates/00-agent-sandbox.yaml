@@ -1,0 +1,53 @@
+{{- if .Values.agentSandbox.enabled }}
+{{- /*
+Agent Sandbox — the CRDs and operator that BOTH substrates build on:
+
+  SandboxTemplate  a pod spec blueprint for a sandbox
+  SandboxClaim     "give me a sandbox from that template" (+ env injection)
+  Sandbox          the materialized sandbox; spec.operatingMode is
+                   Running | Suspended
+
+Sync wave -1 so the CRDs are registered before anything that references them.
+Kata consumes these directly (a Sandbox IS a Kata pod). Lambda MicroVM consumes
+them through a bridge pod that drives a remote AWS MicroVM.
+
+The upstream release manifests are vendored under vendor/agent-sandbox so the
+version is pinned and the blueprint reproduces exactly. Bump the vendored files
+and .Values.agentSandbox.version together.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agent-sandbox
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url | quote }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: {{ .Values.agentSandbox.path | quote }}
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.agentSandbox.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The CRD manifests are large; server-side apply avoids the
+      # last-applied-configuration annotation size limit.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}

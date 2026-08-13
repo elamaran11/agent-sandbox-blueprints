@@ -1,0 +1,59 @@
+{{- if .Values.argoWorkflows.enabled }}
+{{- /*
+Argo Workflows — the engine the Dark Factory pipeline runs on. Each run of the
+pipeline (df-run for Kata, df-run-lambda for Lambda MicroVM) is a Workflow
+submitted by the Argo Events sensor.
+
+Workflow-level concurrency is what bounds how many agents can code at once:
+the pipeline uses a per-issue mutex plus the sandbox pool size. See
+docs/TROUBLESHOOTING.md for how that behaves under load.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-workflows
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.argoWorkflows.chart.repoURL | quote }}
+    chart: {{ .Values.argoWorkflows.chart.name | quote }}
+    targetRevision: {{ .Values.argoWorkflows.chart.version | quote }}
+    helm:
+      releaseName: argo-workflows
+      valuesObject:
+        server:
+          # No ingress: this is an operator/demo UI. Reach it with
+          #   kubectl port-forward -n argo svc/argo-workflows-server 2746:2746
+          authModes:
+            - {{ .Values.argoWorkflows.server.authMode }}
+        controller:
+          # The pipeline writes commit statuses and PR comments, so runs are
+          # worth keeping around long enough to inspect after the fact.
+          workflowDefaults:
+            spec:
+              ttlStrategy:
+                secondsAfterCompletion: 604800  # 7 days
+              podGC:
+                strategy: OnWorkflowSuccess
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.argoWorkflows.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
