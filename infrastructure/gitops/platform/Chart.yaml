@@ -1,0 +1,9 @@
+apiVersion: v2
+name: platform
+description: >-
+  Platform addons for Agent Sandbox Blueprints, expressed as ArgoCD Applications.
+  This is the app-of-apps pattern implemented as a Helm chart so that a single
+  values file can turn individual addons on and off.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
