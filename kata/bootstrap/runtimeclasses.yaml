@@ -1,0 +1,34 @@
+# The three RuntimeClasses (kata-clh, kata-qemu, kata-fc) + the devmapper
+# StorageClass Firecracker needs. Wave 1: they carry scheduling.nodeSelector, so
+# the NodePool labels they select on must already be defined.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kata-runtimeclasses
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
+    targetRevision: main
+    path: kata/runtimeclasses
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,34 @@
+# Karpenter EC2NodeClasses + NodePools that provision nested-virtualization nodes.
+# Wave 0: nodes must be provisionable before kata-deploy has anywhere to install.
+# Update values.yaml (clusterName, nodeRole) to match your terraform outputs.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kata-nodepools
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
+    targetRevision: main
+    path: kata/nodepools
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: karpenter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

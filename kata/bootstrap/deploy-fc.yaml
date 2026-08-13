@@ -1,0 +1,35 @@
+# OPTIONAL — Firecracker install. Separate release because FC needs the
+# devmapper snapshotter rather than overlayfs.
+# Firecracker cannot mount volumes (no virtio-fs), so the Dark Factory agent
+# does NOT run on it. Skip applying this file if you only want clh/qemu.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kata-deploy-fc
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
+    targetRevision: main
+    path: kata/kata-deploy-fc
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
