@@ -1,0 +1,6 @@
+dependencies:
+- name: dark-factory-shared
+  repository: file://../_shared
+  version: 0.1.0
+digest: sha256:5784a2d049d2f749a645c3f414860d0c7abea9875c9388286ced560923b2ed2e
+generated: "2026-08-13T19:31:54.555758-04:00"

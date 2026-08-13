@@ -1,0 +1,13 @@
+apiVersion: v2
+name: dark-factory-shared
+description: >-
+  Pipeline pieces both Dark Factory examples use: RBAC, the GitHub EventSource +
+  EventBus + Sensor, the iterate and merge-teardown WorkflowTemplates, the agent
+  scripts and holdout scenarios, and the sandbox reaper. Consumed as a subchart
+  so the two substrate examples cannot drift apart.
+type: application
+version: 0.1.0
+# NOTE: values.yaml here carries the full pipeline defaults inherited from the
+# upstream implementation, so every template reference resolves. Each example
+# chart also ships defaults.yaml with the same tree, because a subchart's values
+# are NOT visible to the parent chart's own templates (df-run / df-run-lambda).

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: dark-factory-kata
+description: >-
+  Dark Factory pipeline on the Kata micro-VM substrate. Turns a labeled GitHub
+  issue into a reviewed, merged pull request written by an agent inside a
+  hardware-isolated sandbox.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  # Everything both substrates share (sensor, RBAC, iterate/merge templates,
+  # scripts, holdout) lives in one place so the two examples cannot drift.
+  - name: dark-factory-shared
+    version: 0.1.0
+    repository: "file://../_shared"
