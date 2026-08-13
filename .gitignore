@@ -13,3 +13,7 @@ node_modules/
 # Local
 .DS_Store
 *.log
+
+# Real config values — only *.example.* templates are committed
+terraform.tfvars
+values.yaml

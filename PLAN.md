@@ -54,13 +54,14 @@ agent-sandbox-blueprints/
 │
 ├── infrastructure/                  # ── REQUIREMENT 1 ──
 │   ├── terraform/                   # cluster + things that precede K8s
-│   │   ├── vpc.tf  eks.tf  iam.tf  ecr.tf
-│   │   ├── capabilities.tf          # Managed ACK + Managed KRO (+ ArgoCD, see §9.2)
-│   │   ├── argocd.tf                # bootstrap the root app
+│   │   ├── vpc.tf  eks.tf  iam.tf  ecr.tf  karpenter.tf
+│   │   ├── capabilities.tf          # Managed ArgoCD + Managed ACK + Managed KRO
 │   │   ├── variables.tf outputs.tf versions.tf
+│   │   ├── example.tfvars           # COMMITTED template; real terraform.tfvars is gitignored
 │   │   └── README.md
 │   └── gitops/                      # everything in-cluster, via ArgoCD
 │       ├── bootstrap/               # root app-of-apps + ApplicationSet
+│       ├── values.example.yaml      # COMMITTED template (repo, region, flags) — copy → values.yaml (gitignored)
 │       └── addons/                  # ESSENTIAL ONLY:
 │           ├── agent-sandbox-crds/  # upstream Sandbox CRDs + operator (both substrates need this)
 │           ├── argo-workflows/      # pipeline engine
@@ -85,8 +86,16 @@ agent-sandbox-blueprints/
 │   └── iam/                         # build role, exec role, Pod Identity associations
 │
 └── examples/                        # ── REQUIREMENT 5 ──
-    ├── dark-factory-kata/           # pipeline (df-run) + sensor + sample issue + walkthrough
-    └── dark-factory-lambda/         # pipeline (df-run-lambda) + sensor + walkthrough
+    ├── dark-factory-kata/
+    │   ├── values.example.yaml      # ← YOUR knobs: target repo, PAT ref, labels, model, gates
+    │   ├── manifests/               # df-run pipeline, sensor, scripts, holdout
+    │   ├── secrets.md               # how to create the PAT/webhook secrets (never committed)
+    │   └── README.md                # step-by-step walkthrough + expected output
+    └── dark-factory-lambda/
+        ├── values.example.yaml      # ← same shape, Lambda-specific extras (artifact URI, region)
+        ├── manifests/               # df-run-lambda pipeline, sensor, scripts
+        ├── secrets.md
+        └── README.md
 ```
 
 ---
@@ -114,15 +123,34 @@ Nothing is written from scratch that already works. Sources:
 
 ---
 
+## 4b. Configuration & secrets model (no values in git)
+
+**Rule: every environment-specific value is passed in at deploy time; nothing real is committed.**
+
+Three layers, each with a committed `*.example.*` template and a gitignored real file:
+
+| Layer | Committed template | You create | Carries |
+|---|---|---|---|
+| Terraform | `infrastructure/terraform/example.tfvars` | `terraform.tfvars` *(gitignored)* | region, cluster name, account, VPC CIDR, instance types |
+| Platform GitOps | `infrastructure/gitops/values.example.yaml` | `values.yaml` *(gitignored)* | which addons on/off, Bifrost flag, substrate flags |
+| **Each Dark Factory example** | `examples/dark-factory-{kata,lambda}/values.example.yaml` | `values.yaml` *(gitignored)* | **target GitHub repo/org, PAT secret ref, trigger label, base branch, coder model/engine, review-gate toggles, iteration cap**; Lambda adds artifact S3 URI + region |
+
+**Secrets never touch git — two supported paths:**
+1. **Quickstart:** a documented `kubectl create secret generic ...` (GitHub PAT + webhook HMAC) — 2 commands, in each example's `secrets.md`.
+2. **Recommended:** **External Secrets Operator** pulling from AWS Secrets Manager, so the manifests reference a `SecretStore` and the PAT lives in Secrets Manager. Flag-selectable.
+
+Enforcement: `.gitignore` blocks `terraform.tfvars`, `values.yaml`, `*.tfstate`, `.terraform/`; a `task lint:secrets` check (gitleaks-style grep) runs before commit and in CI.
+
 ## 5. Managed vs self-managed (Requirement 4)
 
 | Component | Choice | Rationale |
 |---|---|---|
+| **ArgoCD** | **EKS Managed ArgoCD capability** ✅ *(your call)* | Matches "managed where possible"; nothing to operate. Prereq documented (capability must be enabled in the account/region) |
 | **ACK — iam, s3, eks** | **Managed ACK capability** | GA controllers, AWS-operated, nothing to run |
 | **KRO** | **Managed KRO capability** | AWS-operated. ⚠️ **Constraint:** Managed KRO's controller only watches the **`kro.run`** API group — the `MicrovmSandbox` RGD's `schema.group` **must** be `kro.run`, or it never leaves `Inactive` ("cache sync timeout") |
 | **ACK — lambdamicrovms** | **Self-managed** (forced) | `lambdamicrovms` is **pre-GA**; Managed ACK only bundles GA-upstream controllers. This is the *only* controller we run ourselves. When it goes GA: delete the chart, Managed ACK adopts it, **no RGD change needed** |
-| **ArgoCD** | see §9.2 | Managed capability = less ops; Helm = more portable for a public blueprint |
 | **Argo Workflows / Events** | Helm | No managed option |
+| **Karpenter** | Terraform + Helm ✅ *(your call: include)* | General workload scaling; Kata still needs its own nested-virt MNG alongside it |
 | **Kata node group** | Terraform (self-managed MNG) | Nested virt requires a custom launch template; EKS Auto Mode / Bottlerocket can't provide it |
 
 ---
@@ -135,7 +163,7 @@ Hard-won on OAP; every one of these belongs in `docs/TROUBLESHOOTING.md`.
 - Requires **nested virtualization** → self-managed MNG with `cpuOptions.nestedVirtualization`, AL2023 AMI (**not** Bottlerocket), `c8i`/`m8i`-family instance (exposes VT-x)
 - **CLH** (`kata-clh`): default, fast boot, **no GPU passthrough**
 - **QEMU** (`kata-qemu`): heavier boot, **GPU via VFIO passthrough** — the only GPU-capable VMM
-- **Firecracker** (`kata-fc`): smallest/fastest, but **no virtio-fs (no volume sharing)** and **no device passthrough** → see §9.5, this may not run the coder at all
+- **Firecracker** (`kata-fc`): the **handler is already installed** by kata-deploy (OAP's values.yaml notes *"qemu and fc (Firecracker) are also installed"*) — what's missing is only the **RuntimeClass**, so enabling it is ~3 lines. Known limits: **no virtio-fs (volume sharing)** and **no device passthrough**. Whether the coder's `/workspace` mount works under FC is an **empirical question we test, not assume** (see §9 R5)
 - Kata has **no VM-level suspend/resume today** (upstream WIP). `Sandbox.operatingMode: Suspended` = **delete pod, retain PVC** → cold restart with files intact (same model as Coder/Gitpod), *not* warm hibernation
 
 **Lambda MicroVM**
@@ -187,25 +215,22 @@ Each phase ends with a concrete, observable check.
 
 ---
 
-## 9. Open decisions — need your call before I build
+## 9. Decisions — RESOLVED
 
-These materially change the work; I don't want to guess.
+| # | Decision | Outcome |
+|---|---|---|
+| R1 | **Region** | **Pin `us-west-2`** everywhere (Lambda MicroVM availability); documented as a prerequisite |
+| R2 | **ArgoCD** | **EKS Managed ArgoCD capability** — consistent with "managed where possible"; capability-enabled prereq documented |
+| R3 | **Karpenter** | **Include** in v1 (general workload scaling), alongside the dedicated nested-virt MNG that Kata requires |
+| R4 | **LLM path** | **Keep Bifrost** as an optional flag (default on → Langfuse tracing works for Kata); Lambda stays Bedrock-direct by necessity |
+| R5 | **Firecracker** | **Ship all 3 RuntimeClasses** (`kata-clh`, `kata-qemu`, `kata-fc`). The FC handler is already installed by kata-deploy, so this is a RuntimeClass declaration. **Then run the coder on each and publish a capability matrix from real results** — no theorizing. If FC can't mount `/workspace`, that's a documented row, not a hidden failure |
+| R6 | **Config & secrets** | Per-layer `*.example.*` templates → gitignored real files; **each Dark Factory example gets its own `values.yaml`** (repo, PAT ref, label, branch, model, gates). See §4b |
+| R7 | **External review agents** | **Keep them in the demo**, with **manual wiring steps in the README** for those who have access, plus a default gate set that works standalone so outsiders can still reproduce |
+| R8 | **README style** | Modeled on [`aws-samples/appmod-blueprints`](https://github.com/aws-samples/appmod-blueprints): Overview → Architecture (diagram) → Interactive demo → Getting Started (copy-paste) → Contributing / Security / License / Contact |
 
-**9.1 Region.** Lambda MicroVM availability drove us to **us-west-2**. Pin the blueprint to us-west-2, or parameterize with a documented "Lambda MicroVM requires a supported region" note?
-
-**9.2 ArgoCD: Managed capability or Helm?** Managed = less to operate and matches "use managed where possible." Helm = portable to any EKS/any account, better for a public blueprint. **My lean: Helm**, with a note that Managed ArgoCD is a drop-in alternative.
-
-**9.3 Karpenter: include or drop?** Kata needs a self-managed nested-virt MNG regardless, so Karpenter adds a component without serving the demo. **My lean: drop for v1** (fewer moving parts), mention as an optional add-on.
-
-**9.4 Bifrost, or Bedrock-direct for both substrates?** Today Kata goes through Bifrost (gives Langfuse tracing); Lambda is Bedrock-direct (must be). Making **both** Bedrock-direct removes an addon and a failure mode, but loses centralized LLM tracing for Kata. **My lean: keep Bifrost as an optional flag** (default on, because tracing is a genuinely good demo), Bedrock-direct always available.
-
-**9.5 Firecracker — real blocker to check.** You asked for all 3 VMMs. Honest flag: **Kata + Firecracker does not support virtio-fs**, i.e. **no volume sharing into the guest**. The Kata coder currently mounts a `/workspace` volume. So `kata-fc` may be unable to run the coder as-written. Options: (a) ship `kata-fc` RuntimeClass + a *hello-world* validation workload only, documenting the limitation; (b) rework the coder to need no shared volume; (c) document Firecracker as unsupported-for-this-workload. **My lean: (a)** — you get all three VMMs demonstrably installed, with an honest capability matrix.
-
-**9.6 GitHub auth: PAT or GitHub App?** PAT is 3 lines and fine for a demo. A GitHub App is what enterprise/multi-repo actually needs (per your PR review discussion). **My lean: PAT for the quickstart, GitHub App documented as the production path.**
-
-**9.7 External review agents.** The AWS Security/DevOps reviewers are **external GitHub Apps** tied to specific accounts — a public blueprint can't assume them. Make the review gates **pluggable with a default that works without them** (e.g. holdout gate + `terraform validate` + an LLM-judge review), and document how to wire the real agents? **My lean: yes** — otherwise the blueprint is unreproducible for outsiders.
-
-**9.8 Repo visibility / naming.** Repo is `agent-sandbox-blueprints` (private). Is the intended public name the same? Any branding constraints (aws-samples vs personal) that affect LICENSE/CONTRIBUTING boilerplate?
+### Still to confirm (low impact, easy to change later)
+- **Public repo name / owner** — publishing as `elamaran11/agent-sandbox-blueprints` or moving to `aws-samples/*`? Only affects LICENSE/CONTRIBUTING boilerplate and badge URLs.
+- **GitHub auth** — PAT for the quickstart (passed via values per R6); GitHub App documented as the enterprise/multi-repo path. Flag if you want the App as the primary.
 
 ---
 
@@ -213,9 +238,10 @@ These materially change the work; I don't want to guess.
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Kata + Firecracker can't run the coder (no virtio-fs) | Requirement 2 partially unmet | §9.5 option (a): install + validate with a simple workload, document matrix |
-| Lambda MicroVM is pre-GA (API churn, resume flakiness) | Example 6 flaky for adopters | Pin versions; ship the recreate-fallback; document clearly as preview |
-| External review agents unavailable to public users | Examples not reproducible | §9.7 pluggable gates |
+| Coder may not run under `kata-fc` (no virtio-fs volume sharing) | VMM matrix has a gap | R5: declare the RuntimeClass, **test it**, publish an honest capability matrix (all 3 installed either way) |
+| Lambda MicroVM is pre-GA (API churn, resume flakiness) | Phase 6 flaky for adopters | Pin versions; ship the recreate-fallback; label clearly as preview |
+| External review agents unavailable to public users | Examples not reproducible by outsiders | R7: standalone default gates + manual wiring steps in README |
+| Managed ArgoCD/ACK/KRO capability not enabled in an adopter's account | `task up` fails at phase 1 | Document as an explicit prerequisite with the enable command; fail fast with a clear message |
 | Nested-virt instance availability/quota in target region | Phase 3 blocked | Document required quotas in PREREQUISITES; pick a widely available family |
 | Cost surprise for adopters | Bad first impression | `docs/PREREQUISITES.md` cost estimate + `task down` that actually destroys everything |
 
@@ -223,4 +249,6 @@ These materially change the work; I don't want to guess.
 
 ## 11. Immediate next step
 
-Answer §9 (even just "go with your leans"), and I'll start at **Phase 0** and build up, verifying each phase before moving on.
+All build-shaping decisions are resolved (§9). **Ready to start Phase 0** (scaffold + README skeleton + Taskfile + gitignore/secret-lint), then work up the phases in §7, verifying each before moving on.
+
+Two optional confirmations that don't block Phase 0: public repo owner/name, and whether GitHub App should be primary over PAT.
