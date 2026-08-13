@@ -1,0 +1,58 @@
+# SELF-MANAGED ACK controller for the pre-GA Lambda MicroVM service
+# (lambdamicrovms.services.k8s.aws → MicrovmImage, Microvm).
+#
+# WHY SELF-MANAGED — this is the ONE controller this blueprint runs itself:
+# the EKS Managed ACK capability only bundles controllers whose service is GA
+# upstream, and lambdamicrovms is still v1alpha1. Managed ACK (for GA services
+# like iam and s3) and this controller COEXIST happily — different CRD groups,
+# no conflict.
+#
+# WHEN IT GOES GA: delete this Application and let Managed ACK adopt it. The KRO
+# ResourceGraphDefinition does not change.
+#
+# Wave 0: the CRDs and controller must exist before the RGD (wave 1) references
+# them, otherwise the graph sits Inactive waiting on unknown kinds.
+#
+# Auth is EKS Pod Identity (no IRSA annotation) — the association is created by
+# the chart in lambda-microvm/templates/iam.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ack-lambdamicrovms
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: public.ecr.aws/aws-controllers-k8s
+    chart: lambdamicrovms-chart
+    targetRevision: "0.1.1"
+    helm:
+      releaseName: ack-lambdamicrovms
+      valuesObject:
+        aws:
+          region: us-west-2
+        serviceAccount:
+          create: true
+          name: ack-lambdamicrovms-controller
+        # Cluster-scoped so the single MicrovmSandbox graph can live in any namespace.
+        installScope: cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ack-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

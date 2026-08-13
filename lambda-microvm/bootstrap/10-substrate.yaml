@@ -1,0 +1,44 @@
+# The Lambda MicroVM substrate itself: KRO graph + platform image, the shim
+# bridge SandboxTemplate, the suspend/resume lifecycle controller, and IAM.
+#
+# Wave 1: needs the ACK CRDs from wave 0, and the Managed KRO + Managed ACK
+# capabilities (enabled by terraform) to reconcile the graph's children.
+#
+# Set microvm.accountId and microvm.codeArtifactUri in values before this can
+# build the platform image — see ../README.md.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: lambda-microvm-substrate
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
+    targetRevision: main
+    path: lambda-microvm
+    helm:
+      releaseName: lambda-microvm
+      valuesObject:
+        microvm:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agent-sandbox-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
