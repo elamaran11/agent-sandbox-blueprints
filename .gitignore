@@ -14,6 +14,12 @@ node_modules/
 .DS_Store
 *.log
 
-# Real config values — only *.example.* templates are committed
+# Real config values — only *.example.* templates are committed.
+# NOTE: these are PATH-SPECIFIC on purpose. A blanket `values.yaml` rule would
+# also ignore Helm chart values files, which MUST be committed for ArgoCD to
+# read them from git. Only the user-supplied override files are ignored here.
 terraform.tfvars
-values.yaml
+infrastructure/terraform/terraform.tfvars
+infrastructure/gitops/values.yaml
+examples/dark-factory-kata/values.yaml
+examples/dark-factory-lambda/values.yaml

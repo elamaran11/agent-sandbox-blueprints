@@ -1,0 +1,69 @@
+# Platform addon defaults.
+#
+# These are COMMITTED on purpose — ArgoCD reads them from git. They are safe:
+# no secrets, no account-specific values. Override anything here from your own
+# gitignored infrastructure/gitops/values.yaml (Terraform injects it into the
+# root Application as inline values) — see ../README.md.
+
+# Where the platform manifests are read from. Overridden by Terraform with the
+# repo/revision you configured, so a fork works without editing this file.
+repo:
+  url: https://github.com/elamaran11/agent-sandbox-blueprints
+  revision: main
+
+# ── Agent Sandbox (required) ───────────────────────────────────────────────────
+# The Sandbox / SandboxClaim / SandboxTemplate CRDs + operator. BOTH substrates
+# depend on these, so this is not optional.
+agentSandbox:
+  enabled: true
+  namespace: agent-sandbox-system
+  # Vendored upstream release manifests, pinned for reproducibility.
+  path: infrastructure/gitops/platform/vendor/agent-sandbox
+  version: v0.5.1
+
+# ── Argo Workflows (required) ─────────────────────────────────────────────────
+# The engine the Dark Factory pipeline runs on.
+argoWorkflows:
+  enabled: true
+  namespace: argo
+  chart:
+    repoURL: https://argoproj.github.io/argo-helm
+    name: argo-workflows
+    version: "0.45.24"
+  # Workflows are submitted by the Argo Events sensor, so the server is only for
+  # humans watching runs. Left cluster-internal; port-forward to view it.
+  server:
+    authMode: server
+
+# ── Argo Events (required) ────────────────────────────────────────────────────
+# Turns the GitHub webhook into a workflow submission.
+argoEvents:
+  enabled: true
+  namespace: argo-events
+  chart:
+    repoURL: https://argoproj.github.io/argo-helm
+    name: argo-events
+    version: "2.4.15"
+
+# ── Bifrost — in-cluster LLM gateway (optional) ───────────────────────────────
+# The Kata agent calls models through this so requests can be traced centrally.
+# The Lambda MicroVM agent bypasses it (it runs outside the cluster network and
+# calls Bedrock directly), so turning this off only affects the Kata path's
+# observability, not whether it works.
+bifrost:
+  enabled: true
+  namespace: bifrost
+  # Must match llm_gateway_namespace / llm_gateway_service_account in
+  # infrastructure/terraform — that is what the Bedrock Pod Identity binds to.
+  serviceAccount: bifrost
+
+# ── OpenTelemetry collector (optional) ────────────────────────────────────────
+otelCollector:
+  enabled: false
+  namespace: otel
+
+# ── Langfuse — LLM tracing UI (optional) ──────────────────────────────────────
+# Nice for a demo (you can watch the agent's reasoning), not required.
+langfuse:
+  enabled: false
+  namespace: langfuse
