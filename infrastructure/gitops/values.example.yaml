@@ -1,0 +1,48 @@
+# Copy to values.yaml (gitignored) to override platform defaults.
+#
+#   cp values.example.yaml values.yaml
+#
+# HOW THIS REACHES THE CLUSTER
+#   Terraform reads this file and injects it as inline values on the ArgoCD root
+#   Application. So it lands in the cluster WITHOUT being committed to git.
+#   Defaults live in platform/values.yaml (committed, because ArgoCD reads them
+#   from git). Anything you set here wins.
+#
+# WHAT DOES *NOT* BELONG HERE
+#   Secrets. No GitHub tokens, no API keys. Those are Kubernetes Secrets you
+#   create out-of-band; manifests only ever reference them by name. See each
+#   example's secrets.md.
+#
+# Everything below is optional — an empty values.yaml is valid.
+
+# Point ArgoCD at your fork instead of the upstream blueprint.
+# repo:
+#   url: https://github.com/YOUR-ORG/agent-sandbox-blueprints
+#   revision: main
+
+# ── Optional addons ───────────────────────────────────────────────────────────
+
+# In-cluster LLM gateway for the Kata agent (enables centralized LLM tracing).
+# The Lambda MicroVM agent bypasses this and calls Bedrock directly.
+# bifrost:
+#   enabled: true
+
+# Traces/metrics pipeline. Off by default to keep a first run simple.
+# otelCollector:
+#   enabled: true
+
+# LLM tracing UI — lets you watch the agent's prompts and tool calls.
+# Heaviest optional component (carries a database).
+# langfuse:
+#   enabled: true
+
+# ── Rarely changed ────────────────────────────────────────────────────────────
+
+# agentSandbox:
+#   namespace: agent-sandbox-system
+
+# argoWorkflows:
+#   namespace: argo
+
+# argoEvents:
+#   namespace: argo-events

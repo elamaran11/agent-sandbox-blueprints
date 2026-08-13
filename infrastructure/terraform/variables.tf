@@ -53,10 +53,10 @@ variable "gitops_target_revision" {
   default     = "main"
 }
 
-variable "gitops_addons_path" {
-  description = "Path in the repo holding the platform addon Applications"
+variable "gitops_platform_path" {
+  description = "Path in the repo to the platform Helm chart whose templates are ArgoCD Applications (app-of-apps as a chart, so one values file gates each addon)"
   type        = string
-  default     = "infrastructure/gitops/addons"
+  default     = "infrastructure/gitops/platform"
 }
 
 # ── EKS Managed capabilities ───────────────────────────────────────────────────
