@@ -193,10 +193,18 @@ tasks:
     desc: Fail if anything that looks like a credential is tracked by git
     cmds:
       - |
-        # Only scan files git actually tracks — templates are allowed to show shapes.
+        # Only scan files git actually tracks. Documentation legitimately shows the
+        # SHAPE of a credential, so match on a plausible REAL value (a long
+        # token/key body) rather than the prefix alone — that way
+        # "ghp_your_token_here" and "ghp_..." stay quiet while a genuine leak fires.
         BAD=$(git ls-files -z \
-          | xargs -0 grep -nIE '(ghp_|github_pat_|gho_|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
-            2>/dev/null | grep -vE '\.example\.|README|PLAN\.md|docs/|Taskfile\.yml' || true)
+          | xargs -0 grep -nIE \
+              -e 'gh[pousr]_[A-Za-z0-9]{36,}' \
+              -e 'github_pat_[A-Za-z0-9_]{40,}' \
+              -e 'AKIA[0-9A-Z]{16}' \
+              -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+              -e 'aws_secret_access_key[[:space:]]*=[[:space:]]*[A-Za-z0-9/+=]{40}' \
+            2>/dev/null || true)
         if [ -n "$BAD" ]; then
           echo "✗ possible secret committed:"; echo "$BAD"; exit 1
         fi
