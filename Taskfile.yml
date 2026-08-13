@@ -107,10 +107,20 @@ tasks:
         kubectl get nodes
 
   gitops:bootstrap:
-    desc: Point ArgoCD at this repo and sync the platform addons
+    desc: Ensure the ArgoCD platform root Application exists
     cmds:
-      - kubectl apply -f {{.GITOPS_DIR}}/bootstrap/
-      - echo "✓ ArgoCD root application applied — watch with 'task status'"
+      # On the default path Terraform already created this Application (so it
+      # could inject your gitignored overrides as inline values). Only fall back
+      # to the static manifest if it is genuinely missing — e.g. you set
+      # enable_managed_argocd=false and installed ArgoCD yourself.
+      - |
+        if kubectl get application platform-addons -n argocd >/dev/null 2>&1; then
+          echo "✓ platform-addons Application already exists (created by terraform)"
+        else
+          echo "platform-addons not found — applying the self-managed fallback manifest"
+          kubectl apply -f {{.GITOPS_DIR}}/bootstrap/
+        fi
+      - 'echo "✓ platform bootstrapped — watch it reconcile with: task status"'
 
   status:
     desc: Show ArgoCD application + sandbox status
