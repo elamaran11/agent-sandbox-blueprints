@@ -1,0 +1,207 @@
+# Agent Sandbox Blueprints — one entry point for the whole blueprint.
+#
+#   task up          create cluster + platform (terraform, then GitOps addons)
+#   task kata        add the Kata micro-VM substrate
+#   task lambda      add the AWS Lambda MicroVM substrate
+#   task demo-kata   run the Dark Factory on Kata
+#   task demo-lambda run the Dark Factory on Lambda MicroVM
+#   task down        destroy everything
+#
+# Every task is idempotent and prints what it is about to do. Nothing here
+# reads a secret from the repo — config comes from the gitignored files you
+# create in step 1 of the README.
+version: "3"
+
+vars:
+  TF_DIR: infrastructure/terraform
+  GITOPS_DIR: infrastructure/gitops
+  # Pinned: AWS Lambda MicroVM is only available in select regions.
+  REGION: '{{.REGION | default "us-west-2"}}'
+
+env:
+  AWS_REGION: "{{.REGION}}"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  # ── Preflight ───────────────────────────────────────────────────────────────
+  preflight:
+    desc: Verify required CLIs, AWS auth, and that config files exist
+    cmds:
+      - task: check:tools
+      - task: check:aws
+      - task: check:config
+
+  check:tools:
+    internal: true
+    cmds:
+      - |
+        missing=""
+        for t in terraform kubectl aws helm task; do
+          command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+        done
+        if [ -n "$missing" ]; then
+          echo "ERROR: missing required tools:$missing"; exit 1
+        fi
+        echo "✓ tools present"
+
+  check:aws:
+    internal: true
+    cmds:
+      - |
+        if ! aws sts get-caller-identity >/dev/null 2>&1; then
+          echo "ERROR: AWS credentials not configured (aws sts get-caller-identity failed)"; exit 1
+        fi
+        echo "✓ AWS identity: $(aws sts get-caller-identity --query Arn --output text)"
+        echo "✓ region: {{.REGION}}"
+
+  check:config:
+    internal: true
+    cmds:
+      - |
+        missing=0
+        [ -f "{{.TF_DIR}}/terraform.tfvars" ] || { echo "MISSING {{.TF_DIR}}/terraform.tfvars — copy example.tfvars"; missing=1; }
+        [ -f "{{.GITOPS_DIR}}/values.yaml" ]  || { echo "MISSING {{.GITOPS_DIR}}/values.yaml — copy values.example.yaml"; missing=1; }
+        [ "$missing" -eq 0 ] || exit 1
+        echo "✓ config files present (and gitignored)"
+
+  # ── Platform ────────────────────────────────────────────────────────────────
+  up:
+    desc: Create the cluster and platform (terraform + GitOps addons)
+    cmds:
+      - task: preflight
+      - task: tf:apply
+      - task: kubeconfig
+      - task: gitops:bootstrap
+      - echo "✓ platform ready — next: 'task kata' and/or 'task lambda'"
+
+  tf:init:
+    desc: terraform init
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform init -upgrade
+
+  tf:plan:
+    desc: terraform plan
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform plan -var-file=terraform.tfvars
+
+  tf:apply:
+    desc: terraform apply (creates VPC, EKS, Karpenter, Managed ArgoCD/ACK/KRO)
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform init -upgrade
+      - terraform apply -var-file=terraform.tfvars -auto-approve
+
+  kubeconfig:
+    desc: Write kubeconfig for the new cluster
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - |
+        NAME=$(terraform output -raw cluster_name)
+        aws eks update-kubeconfig --name "$NAME" --region {{.REGION}}
+        kubectl get nodes
+
+  gitops:bootstrap:
+    desc: Point ArgoCD at this repo and sync the platform addons
+    cmds:
+      - kubectl apply -f {{.GITOPS_DIR}}/bootstrap/
+      - echo "✓ ArgoCD root application applied — watch with 'task status'"
+
+  status:
+    desc: Show ArgoCD application + sandbox status
+    cmds:
+      - kubectl get applications -A 2>/dev/null || true
+      - kubectl get sandboxes,sandboxclaims -A 2>/dev/null || true
+
+  # ── Substrates ──────────────────────────────────────────────────────────────
+  kata:
+    desc: Add the Kata micro-VM substrate (clh + qemu + fc)
+    cmds:
+      - kubectl apply -f kata/bootstrap/
+      - echo "✓ Kata substrate applied — RuntimeClasses kata-clh, kata-qemu, kata-fc"
+
+  lambda:
+    desc: Add the AWS Lambda MicroVM substrate
+    cmds:
+      - kubectl apply -f lambda-microvm/bootstrap/
+      - echo "✓ Lambda MicroVM substrate applied"
+
+  # ── Examples ────────────────────────────────────────────────────────────────
+  demo-kata:
+    desc: Deploy the Dark Factory pipeline on Kata
+    cmds:
+      - |
+        [ -f examples/dark-factory-kata/values.yaml ] || {
+          echo "MISSING examples/dark-factory-kata/values.yaml — copy values.example.yaml"; exit 1; }
+      - kubectl apply -f examples/dark-factory-kata/bootstrap/
+      - echo "✓ label a GitHub issue to start a run"
+
+  demo-lambda:
+    desc: Deploy the Dark Factory pipeline on Lambda MicroVM
+    cmds:
+      - |
+        [ -f examples/dark-factory-lambda/values.yaml ] || {
+          echo "MISSING examples/dark-factory-lambda/values.yaml — copy values.example.yaml"; exit 1; }
+      - kubectl apply -f examples/dark-factory-lambda/bootstrap/
+      - echo "✓ label a GitHub issue to start a run"
+
+  # ── Hygiene ─────────────────────────────────────────────────────────────────
+  lint:
+    desc: Lint terraform, YAML, and check for committed secrets
+    cmds:
+      - task: lint:tf
+      - task: lint:secrets
+
+  lint:tf:
+    desc: terraform fmt + validate
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform fmt -check -recursive
+      - terraform init -backend=false -upgrade >/dev/null && terraform validate
+
+  lint:secrets:
+    desc: Fail if anything that looks like a credential is tracked by git
+    cmds:
+      - |
+        # Only scan files git actually tracks — templates are allowed to show shapes.
+        BAD=$(git ls-files -z \
+          | xargs -0 grep -nIE '(ghp_|github_pat_|gho_|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
+            2>/dev/null | grep -vE '\.example\.|README|PLAN\.md|docs/|Taskfile\.yml' || true)
+        if [ -n "$BAD" ]; then
+          echo "✗ possible secret committed:"; echo "$BAD"; exit 1
+        fi
+        # And make sure the gitignored config files really are ignored.
+        for f in infrastructure/terraform/terraform.tfvars infrastructure/gitops/values.yaml \
+                 examples/dark-factory-kata/values.yaml examples/dark-factory-lambda/values.yaml; do
+          if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+            echo "✗ $f is TRACKED but must be gitignored"; exit 1
+          fi
+        done
+        echo "✓ no secrets tracked"
+
+  # ── Teardown ────────────────────────────────────────────────────────────────
+  down:
+    desc: Destroy everything (sandboxes, substrates, cluster)
+    prompt: This destroys the cluster and all sandboxes. Continue?
+    cmds:
+      - task: down:sandboxes
+      - task: tf:destroy
+
+  down:sandboxes:
+    internal: true
+    cmds:
+      # Delete claims first so substrate controllers terminate MicroVMs/pods cleanly
+      # instead of leaking them when the cluster goes away.
+      - kubectl delete sandboxclaims --all -A --ignore-not-found --timeout=180s || true
+      - kubectl delete microvms.lambdamicrovms.services.k8s.aws --all -A --ignore-not-found --timeout=300s || true
+
+  tf:destroy:
+    desc: terraform destroy
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - terraform destroy -var-file=terraform.tfvars -auto-approve
