@@ -1,6 +1,9 @@
 # Agent Sandbox Blueprints — Implementation Plan
 
-> **Status:** DRAFT FOR REVIEW — nothing built yet. Review §9 (open decisions) first; they change the shape of the build.
+> **Status:** Phases 0–6 BUILT and pushed. All decisions in §9 are resolved.
+> Everything renders/validates locally; **nothing has been deployed to AWS yet** —
+> `task up` is the next step and needs your account. See §12 for exactly what is
+> verified vs unverified.
 
 ## 1. Goal
 
@@ -253,3 +256,49 @@ Each phase ends with a concrete, observable check.
 All build-shaping decisions are resolved (§9). **Ready to start Phase 0** (scaffold + README skeleton + Taskfile + gitignore/secret-lint), then work up the phases in §7, verifying each before moving on.
 
 Two optional confirmations that don't block Phase 0: public repo owner/name, and whether GitHub App should be primary over PAT.
+
+
+---
+
+## 12. Build status (as of this commit)
+
+### Done and verified locally
+
+| Phase | Deliverable | Verification |
+|---|---|---|
+| 0 | README (appmod-blueprints style), Taskfile, LICENSE, CONTRIBUTING, SECURITY, .gitignore | `task --list` parses 22 tasks; all doc links resolve |
+| 1 | `infrastructure/terraform` — VPC, EKS 1.36, Karpenter, Managed ArgoCD/ACK/KRO, IAM, ECR | `terraform fmt -check` clean, **`terraform validate` Success** |
+| 2 | `infrastructure/gitops` — app-of-apps as a Helm chart, values-gated addons | renders 4 Applications default, 6 with optionals on |
+| 3 | `kata/` — 3 VMMs (clh/qemu/fc), kata-deploy + fc, readiness, 4 Karpenter pools | runtimeclasses 4 objects, nodepools 8 objects |
+| 4 | `lambda-microvm/` — self-managed ACK controller, KRO RGD, shim bridge, lifecycle, IAM, image + publish.sh | 0 objects disabled (safe default), 20 enabled |
+| 5–6 | `examples/dark-factory-{kata,lambda}` + `_shared` subchart, per-example values | both render **27 objects** |
+| — | Docs: ARCHITECTURE, SUBSTRATES, DIAGRAMS, PREREQUISITES, TROUBLESHOOTING, ROADMAP | committed |
+| — | `task lint:secrets` | passes on the tree; **proven to fire** on a synthetic token |
+
+Repo carries **no `.terraform/`** (836 MB stayed ignored) and no secrets.
+
+### NOT yet verified — needs a real AWS account
+
+Everything above is static validation. None of it has run against AWS:
+
+1. `task up` — cluster create, and whether the ARGOCD/ACK/KRO capabilities enable
+   cleanly via CLI in your account/region.
+2. `task kata` — whether Karpenter provisions a nested-virt node and a pod actually
+   boots under `kata-clh` / `kata-qemu` / `kata-fc`.
+3. `task lambda` — whether the KRO graph reconciles, the MicrovmImage builds from the
+   S3 artifact, and a `Microvm` reaches `RUNNING`.
+4. `task demo-*` — a real issue → PR → gates → merge, on both substrates.
+5. Agent images are **not built or pushed** — both examples reference placeholder ECR
+   URLs you must replace.
+
+### Known gaps to close next
+
+- `examples/_shared/values.yaml` and each example's `defaults.yaml` are the upstream
+  values tree carried over wholesale. They work, but should be trimmed to what this
+  blueprint actually uses.
+- `kata/nodepools/values.yaml` still needs your real `clusterName` / `nodeRole` (or
+  wiring to Terraform outputs).
+- Sensor currently routes both trigger labels; confirm the label→template mapping
+  matches the two examples once deployed.
+- No CI yet. A GitHub Action running `task lint` + the render checks would keep this
+  honest.
