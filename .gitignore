@@ -1,0 +1,15 @@
+# Terraform — never commit provider binaries or state (OAP has a 766MB .terraform/ committed)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
+*.tfvars
+!example.tfvars
+
+# Node
+node_modules/
+
+# Local
+.DS_Store
+*.log
