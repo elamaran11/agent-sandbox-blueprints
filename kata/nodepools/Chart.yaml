@@ -1,0 +1,4 @@
+apiVersion: v2
+name: karpenter-nodepools
+description: Karpenter NodePools + EC2NodeClasses that provision nested-virtualization nodes for Kata sandboxes
+version: 0.1.0

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: kata
+description: Kata RuntimeClasses (Cloud Hypervisor, QEMU, Firecracker) + the devmapper StorageClass Firecracker requires
+type: application
+version: 0.1.0
