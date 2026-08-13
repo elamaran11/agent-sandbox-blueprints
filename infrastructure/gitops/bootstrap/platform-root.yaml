@@ -1,0 +1,43 @@
+# Platform root Application — FALLBACK for a self-managed ArgoCD.
+#
+# On the default path you do NOT need this file: Terraform creates this
+# Application itself (see infrastructure/terraform/argocd.tf) so it can inject
+# your gitignored overrides as inline values.
+#
+# Use this only if you set enable_managed_argocd=false and installed ArgoCD
+# yourself. In that case edit repoURL/targetRevision below to your fork, then:
+#
+#   kubectl apply -f infrastructure/gitops/bootstrap/
+#
+# Overrides then come from the committed platform/values.yaml (edit it directly),
+# because there is no Terraform step here to inject a gitignored file.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-addons
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
+    targetRevision: main
+    path: infrastructure/gitops/platform
+    helm:
+      releaseName: platform
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
