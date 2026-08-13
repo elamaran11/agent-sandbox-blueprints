@@ -81,6 +81,23 @@ variable "enable_managed_kro" {
   default     = true
 }
 
+# ── In-cluster LLM gateway (Kata path) ────────────────────────────────────────
+# The Kata agent reaches models through this gateway so calls can be traced
+# centrally (Langfuse). The Lambda MicroVM agent bypasses it and calls Bedrock
+# directly, because it runs outside the cluster network.
+
+variable "llm_gateway_namespace" {
+  description = "Namespace of the in-cluster LLM gateway that gets Bedrock access via Pod Identity"
+  type        = string
+  default     = "bifrost"
+}
+
+variable "llm_gateway_service_account" {
+  description = "ServiceAccount of the in-cluster LLM gateway"
+  type        = string
+  default     = "bifrost"
+}
+
 # ── Substrate toggles ─────────────────────────────────────────────────────────
 
 variable "create_coder_ecr_repos" {
