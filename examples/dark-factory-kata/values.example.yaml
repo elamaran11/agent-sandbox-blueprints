@@ -1,0 +1,82 @@
+# Dark Factory on Kata — copy to values.yaml (gitignored) and edit.
+#
+#   cp values.example.yaml values.yaml
+#
+# WHAT BELONGS HERE:  the repo the agent works in, which label triggers it,
+#                     which model it uses, which review gates are on.
+# WHAT DOES *NOT*:    the GitHub token itself. Only the NAME of the Kubernetes
+#                     Secret holding it. See secrets.md.
+
+# ── The repository the agent works in ─────────────────────────────────────────
+# Point this at a THROWAWAY repo first. The agent opens PRs here, and a merge is
+# a real merge.
+github:
+  # owner/name of the target repo
+  repo: your-org/your-sandbox-repo
+
+  # Branch PRs target.
+  baseBranch: main
+
+  # Name of the Kubernetes Secret holding the GitHub credentials — NOT the token.
+  # Create it with kubectl or External Secrets (see secrets.md). Keys expected:
+  #   token          a PAT (or GitHub App installation token) scoped to the repo
+  #   webhookSecret  the HMAC secret you configured on the GitHub webhook
+  secretName: dark-factory-github
+
+  # Label that starts a run. Add this label to an issue and the pipeline fires.
+  # Keep it distinct from the Lambda example's label so both can coexist on one
+  # cluster and route to the right substrate.
+  triggerLabel: dark-factory
+
+# ── The agent ─────────────────────────────────────────────────────────────────
+agent:
+  # Container image built from ../_shared/agent (x86_64 for the Kata pod).
+  # Use the ECR URL terraform printed: terraform output coder_ecr_urls
+  image: <account>.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder:v1
+
+  # claude | kiro — which headless coding agent runs inside the sandbox.
+  engine: claude
+
+  # Bedrock model id the agent reasons with.
+  model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  # Which Kata hypervisor the sandbox runs on.
+  #   kata-clh   default — fast boot, supports the workspace volume
+  #   kata-qemu  use if you need GPU passthrough
+  #   kata-fc    will NOT work here: Firecracker cannot mount volumes and this
+  #              agent needs a workspace. See ../../kata/README.md.
+  runtimeClass: kata-clh
+
+  # How many concurrent sandboxes to keep warm. A claim takes one instantly and
+  # the pool refills. This is also the effective concurrency limit for runs.
+  warmPoolSize: 2
+
+# ── Review gates ──────────────────────────────────────────────────────────────
+# Every gate is advisory to a HUMAN — nothing merges without an approval event.
+gates:
+  # Hidden test scenarios the agent can neither see nor edit, scored by a
+  # different model. This is the gate that works for everyone with no external
+  # dependencies, so it is on by default.
+  holdout:
+    enabled: true
+
+  # Applies the change in an ephemeral namespace (k8s manifests) or runs
+  # terraform validate (HCL). The only pipeline step with cluster write access.
+  deployTest:
+    enabled: true
+
+  # The AWS Security and DevOps review agents are EXTERNAL GitHub Apps tied to
+  # specific accounts. If you do not have them installed, leave these false —
+  # the pipeline still runs end to end on the gates above.
+  # See README.md → "Wiring the AWS review agents" if you do.
+  securityAgent:
+    enabled: false
+  devopsAgent:
+    enabled: false
+
+# ── Iteration ─────────────────────────────────────────────────────────────────
+iterate:
+  # Comment "fix findings" on the PR and the agent revises. Capped so a
+  # disagreement between the agent and a reviewer cannot loop forever.
+  enabled: true
+  maxIterations: 3

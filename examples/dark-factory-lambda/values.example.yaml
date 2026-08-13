@@ -1,0 +1,74 @@
+# Dark Factory on AWS Lambda MicroVM — copy to values.yaml (gitignored) and edit.
+#
+#   cp values.example.yaml values.yaml
+#
+# Same shape as the Kata example, plus the MicroVM-specific settings at the
+# bottom. As there: the GitHub token itself never goes here — only the NAME of
+# the Secret holding it. See secrets.md.
+
+# ── The repository the agent works in ─────────────────────────────────────────
+github:
+  repo: your-org/your-sandbox-repo
+  baseBranch: main
+  secretName: dark-factory-github
+
+  # Distinct from the Kata label so one cluster can run both substrates and route
+  # each issue to the right one.
+  triggerLabel: darkfactory-lambda
+
+# ── The agent ─────────────────────────────────────────────────────────────────
+agent:
+  engine: claude
+
+  # NOTE: the agent calls Bedrock DIRECTLY here. A MicroVM runs outside the
+  # cluster network, so it cannot reach an in-cluster LLM gateway — Bedrock
+  # access comes from the MicroVM execution role instead.
+  model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+# ── Review gates ──────────────────────────────────────────────────────────────
+# Identical to the Kata example — the pipeline and gates do not change with the
+# substrate. That is the point: same UX, different isolation technology.
+gates:
+  holdout:
+    enabled: true
+  deployTest:
+    enabled: true
+  # External GitHub Apps — leave false unless you have them installed.
+  securityAgent:
+    enabled: false
+  devopsAgent:
+    enabled: false
+
+iterate:
+  enabled: true
+  maxIterations: 3
+
+# ── MicroVM specifics ─────────────────────────────────────────────────────────
+microvm:
+  region: us-west-2
+
+  # The S3 ZIP Lambda builds the VM image from. ../../lambda-microvm/image/publish.sh
+  # prints this after each publish.
+  #
+  # CRITICAL: every publish needs a NEW key. Overwriting the same key does NOT
+  # rebuild the image — this is the classic "my fix didn't take effect" trap.
+  codeArtifactUri: s3://coder-microvm-artifacts/coder-r1.zip
+
+  # ARM64 base image built from ../_shared/agent + ../../lambda-microvm/image.
+  # Lambda MicroVM is ARM64-only.
+  baseImage: <account>.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder-microvm:v1-arm64
+
+  idlePolicy:
+    # MUST stay false. If true, ANY request to the VM endpoint wakes it — the VM
+    # then never actually stays suspended and you pay for idle time.
+    autoResumeEnabled: false
+
+    # How long a RUNNING VM may idle before the runtime suspends it. Only a
+    # backstop; the pipeline suspends explicitly once the PR is open.
+    maxIdleDurationSeconds: 1800
+
+    # How long a SUSPENDED VM is kept before AWS terminates it.
+    # 28800 (8h) is the maximum and the right choice: review + a human coming
+    # back can easily take hours. Set this too low and the VM is destroyed before
+    # anyone posts feedback, so the fix round cannot resume it.
+    suspendedDurationSeconds: 28800
