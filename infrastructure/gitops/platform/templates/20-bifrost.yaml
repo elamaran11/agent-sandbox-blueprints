@@ -1,0 +1,48 @@
+{{- if .Values.bifrost.enabled }}
+{{- /*
+Bifrost — in-cluster LLM gateway (OPTIONAL).
+
+Why it exists here: the Kata agent runs inside the cluster, so it can route model
+calls through a gateway. That buys centralized tracing (Langfuse) and one place
+to swap models — a materially better demo, since you can watch the agent think.
+
+Why it is optional: the Lambda MicroVM agent CANNOT use it. That sandbox runs
+outside the cluster network entirely, so it calls Bedrock directly with its own
+execution role. Turning Bifrost off therefore costs the Kata path its tracing;
+it does not stop either substrate from working.
+
+Credentials: no API keys here. The gateway's ServiceAccount is bound to a Bedrock
+role via EKS Pod Identity in infrastructure/terraform/iam.tf — keep
+.Values.bifrost.serviceAccount in sync with llm_gateway_service_account there.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bifrost
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url | quote }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: infrastructure/gitops/platform/addons/bifrost
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.bifrost.namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}

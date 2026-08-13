@@ -1,0 +1,35 @@
+{{- if .Values.otelCollector.enabled }}
+{{- /*
+OpenTelemetry collector (OPTIONAL) — receives traces/metrics from the platform
+and forwards them on (e.g. to Langfuse for LLM traces, or CloudWatch/AMP).
+
+Off by default: the blueprint's core promise (issue -> reviewed PR) does not
+depend on it, and every optional addon is one more thing that can fail during a
+first run. Turn it on once the pipeline works.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: otel-collector
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url | quote }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: infrastructure/gitops/platform/addons/otel-collector
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.otelCollector.namespace }}
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: { duration: 15s, factor: 2, maxDuration: 5m }
+{{- end }}

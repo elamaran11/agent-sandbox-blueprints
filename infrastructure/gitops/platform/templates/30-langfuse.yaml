@@ -1,0 +1,39 @@
+{{- if .Values.langfuse.enabled }}
+{{- /*
+Langfuse (OPTIONAL) — LLM tracing UI. With Bifrost routing the Kata agent's
+calls, this is where you watch the agent reason: prompts, tool calls, tokens,
+latency per run.
+
+Sync wave 3: it consumes what the gateway and collector emit, so it lands after
+both. Off by default (it carries a database and is the heaviest optional piece).
+
+Known gotcha, documented in docs/TROUBLESHOOTING.md: if traces stop arriving,
+the usual cause is the collector's Langfuse API key hash drifting from the
+seeded value — the collector gets 401s and silently drops spans.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: langfuse
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repo.url | quote }}
+    targetRevision: {{ .Values.repo.revision | quote }}
+    path: infrastructure/gitops/platform/addons/langfuse
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Values.langfuse.namespace }}
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff: { duration: 15s, factor: 2, maxDuration: 5m }
+{{- end }}
