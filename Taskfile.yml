@@ -219,7 +219,6 @@ tasks:
         ECR_JSON="$(terraform -chdir="$TF" output -json coder_ecr_urls 2>/dev/null || echo '{}')"
         pick() { printf '%s' "$ECR_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('$1',''))"; }
         CODER_REPO="$(pick coder)"
-        DEPLOY_REPO="$(pick deploy-test)"
         TAG="{{.IMAGE_TAG | default \"latest\"}}"
 
         # Bifrost by ClusterIP, not DNS: a Kata guest cannot resolve svc names.
@@ -238,7 +237,6 @@ tasks:
         add holdout.bifrostUrl     "${BIFROST_IP:+http://$BIFROST_IP:8080}"
         add reviewImage            "${CODER_REPO:+$CODER_REPO:$TAG}"
         add holdout.evalImage      "${CODER_REPO:+$CODER_REPO:$TAG}"
-        add deployTest.image       "${DEPLOY_REPO:+$DEPLOY_REPO:$TAG}"
         add microvm.podIdentity.clusterName "$CLUSTER"
         add microvm.podIdentity.accountId   "$ACCOUNT"
 

@@ -25,7 +25,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The agent entrypoint lives with the example that uses it; the MicroVM image is
 # the same agent wrapped in the hook-server this runtime requires.
-ENTRYPOINT="${ENTRYPOINT:-$HERE/../../examples/dark-factory-lambda/agent/entrypoint.js}"
+ENTRYPOINT="${ENTRYPOINT:-$HERE/../../examples/_shared/agent/entrypoint.js}"
 
 if [[ ! -f "$ENTRYPOINT" ]]; then
   echo "ERROR: agent entrypoint not found at: $ENTRYPOINT" >&2
@@ -42,10 +42,13 @@ fi
 # read the terraform output.
 TF_DIR="${TF_DIR:-$HERE/../../infrastructure/terraform}"
 if [[ -z "${CODER_IMAGE:-}" ]]; then
+  # coder_microvm is the ARM64 repo. Lambda MicroVM is ARM_64-only, and ecr.tf
+  # creates a separate repo for it precisely so the two arches never collide on
+  # one tag.
   CODER_REPO="$(terraform -chdir="$TF_DIR" output -json coder_ecr_urls 2>/dev/null \
-    | python3 -c 'import json,sys;print(json.load(sys.stdin).get("coder",""))' 2>/dev/null || echo "")"
+    | python3 -c 'import json,sys;print(json.load(sys.stdin).get("coder_microvm",""))' 2>/dev/null || echo "")"
   if [[ -n "$CODER_REPO" ]]; then
-    CODER_IMAGE="${CODER_REPO}:${CODER_TAG:-latest}-arm64"
+    CODER_IMAGE="${CODER_REPO}:${CODER_TAG:-latest}"
   fi
 fi
 
@@ -58,9 +61,15 @@ if [[ -z "${CODER_IMAGE:-}" ]]; then
 fi
 
 # Lambda MicroVM is ARM_64-only — an amd64 base builds fine and then fails to boot.
-if [[ "$CODER_IMAGE" != *arm64* ]]; then
-  echo "WARNING: $CODER_IMAGE has no arm64 marker. Lambda MicroVM is ARM_64-only;" >&2
-  echo "         an amd64 image will build and then fail to start." >&2
+# Verify the manifest arch rather than trusting the tag name.
+ARCH="$(aws ecr batch-get-image --region "$REGION" \
+          --repository-name "$(printf '%s' "${CODER_IMAGE%%:*}" | cut -d/ -f2-)" \
+          --image-ids imageTag="${CODER_IMAGE##*:}" \
+          --query 'images[0].imageManifest' --output text 2>/dev/null \
+        | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("architecture",""))' 2>/dev/null || echo "")"
+if [[ -n "$ARCH" && "$ARCH" != "arm64" ]]; then
+  echo "WARNING: $CODER_IMAGE is $ARCH, but Lambda MicroVM is ARM_64-only." >&2
+  echo "         It will build and then fail to start." >&2
 fi
 
 echo "base image: $CODER_IMAGE"

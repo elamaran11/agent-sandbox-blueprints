@@ -320,7 +320,10 @@ microvm:
 #                 Validation only — no AWS creds, no apply (no real infra created).
 # deploy-test runs only when kind != none; advisory in v1.
 deployTest:
-  enabled: true
+  # OFF by default: this blueprint ships no deploy-test image build context
+  # and terraform creates no deploy-test ECR repo, so there is nothing to run.
+  # Build your own image, push it, set .image, then enable.
+  enabled: false
   # Regex (grep -E) of changed files that mark each artifact kind. k8s takes
   # precedence when a PR touches both.
   k8sPatterns: "(Chart\\.yaml|/templates/|k8s/|deployment\\.ya?ml|Dockerfile)"
