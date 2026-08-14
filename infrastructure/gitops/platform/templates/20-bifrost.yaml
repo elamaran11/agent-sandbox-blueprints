@@ -14,6 +14,14 @@ it does not stop either substrate from working.
 Credentials: no API keys here. The gateway's ServiceAccount is bound to a Bedrock
 role via EKS Pod Identity in infrastructure/terraform/iam.tf — keep
 .Values.bifrost.serviceAccount in sync with llm_gateway_service_account there.
+
+Sourced from the UPSTREAM chart, not a local path. This previously pointed at
+infrastructure/gitops/platform/addons/bifrost, which does not exist in this repo —
+ArgoCD failed with "app path does not exist" and the Application never synced. The
+OAP equivalent is an umbrella chart adding a Crossplane IAM Role and an
+ExternalSecret; neither Crossplane nor External Secrets is part of this blueprint,
+and Terraform already creates the Bedrock role + Pod Identity association, so
+there is nothing left to wrap.
 */ -}}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -27,9 +35,24 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: {{ .Values.repo.url | quote }}
-    targetRevision: {{ .Values.repo.revision | quote }}
-    path: infrastructure/gitops/platform/addons/bifrost
+    repoURL: {{ .Values.bifrost.chart.repoURL | quote }}
+    chart: {{ .Values.bifrost.chart.name | quote }}
+    targetRevision: {{ .Values.bifrost.chart.version | quote }}
+    helm:
+      releaseName: bifrost
+      valuesObject:
+        serviceAccount:
+          create: true
+          # MUST match llm_gateway_service_account in terraform: the Pod Identity
+          # association is keyed on (namespace, serviceAccount), so a different
+          # name here means the gateway starts fine and then gets AccessDenied
+          # from Bedrock — which looks like a model problem, not a naming one.
+          name: {{ .Values.bifrost.serviceAccount | quote }}
+        service:
+          # ClusterIP on purpose. The Kata agent reaches this by IP rather than DNS,
+          # because a Kata guest's resolver cannot resolve cluster service names.
+          type: ClusterIP
+          port: {{ .Values.bifrost.port | default 8080 }}
   destination:
     name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.bifrost.namespace }}
@@ -39,6 +62,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
     retry:
       limit: 5
       backoff:

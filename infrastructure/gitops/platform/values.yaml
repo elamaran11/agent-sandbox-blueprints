@@ -66,6 +66,15 @@ bifrost:
   # Must match llm_gateway_namespace / llm_gateway_service_account in
   # infrastructure/terraform — that is what the Bedrock Pod Identity binds to.
   serviceAccount: bifrost
+  # The Kata agent reaches the gateway here, by ClusterIP (a Kata guest cannot
+  # resolve cluster service DNS).
+  port: 8080
+  chart:
+    repoURL: https://maximhq.github.io/bifrost/helm-charts
+    name: bifrost
+    # Pinned: Bifrost releases frequently, and an unpinned version means two people
+    # running this blueprint a month apart get different gateways.
+    version: "2.1.16"
 
 # ── OpenTelemetry collector (optional) ────────────────────────────────────────
 otelCollector:

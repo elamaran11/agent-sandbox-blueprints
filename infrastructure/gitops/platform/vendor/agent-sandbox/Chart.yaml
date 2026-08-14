@@ -1,0 +1,21 @@
+apiVersion: v2
+name: agent-sandbox-operator
+description: >-
+  Upstream agent-sandbox v0.5.1 install (controller Deployment + CRDs + RBAC +
+  webhooks), vendored verbatim from kubernetes-sigs/agent-sandbox. Both substrates
+  depend on this: it is what turns a SandboxClaim into a running sandbox.
+
+  Packaged as a thin Helm chart only because ArgoCD renders this path as one, and
+  pinned by vendoring rather than pulled at sync time so a cluster cannot silently
+  pick up a new upstream release. The files under templates/ contain NO Helm
+  templating and are applied as-is.
+
+  The CRDs are large enough to exceed the annotation size limit that client-side
+  apply uses, so the Application sets ServerSideApply=true. Without it the sync
+  fails with "metadata.annotations: Too long".
+
+  Provides: sandboxes.agents.x-k8s.io plus sandboxclaims / sandboxtemplates /
+  sandboxwarmpools in extensions.agents.x-k8s.io.
+type: application
+version: 0.5.1
+appVersion: "0.5.1"
