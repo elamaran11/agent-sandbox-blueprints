@@ -33,7 +33,7 @@ spec:
     directory:
       recurse: true
   destination:
-    server: https://kubernetes.default.svc
+    name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.agentSandbox.namespace }}
   syncPolicy:
     automated:

@@ -27,7 +27,7 @@ spec:
         microvm:
           enabled: true
   destination:
-    server: https://kubernetes.default.svc
+    name: ${DESTINATION_CLUSTER}
     namespace: agent-sandbox-system
   syncPolicy:
     automated:

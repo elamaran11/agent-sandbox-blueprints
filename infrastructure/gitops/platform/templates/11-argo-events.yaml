@@ -32,7 +32,7 @@ spec:
         # one named "default" exists in this namespace.
         installValidatingWebhook: false
   destination:
-    server: https://kubernetes.default.svc
+    name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.argoEvents.namespace }}
   syncPolicy:
     automated:

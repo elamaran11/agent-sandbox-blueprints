@@ -27,7 +27,7 @@ spec:
     targetRevision: {{ .Values.repo.revision | quote }}
     path: infrastructure/gitops/platform/addons/langfuse
   destination:
-    server: https://kubernetes.default.svc
+    name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.langfuse.namespace }}
   syncPolicy:
     automated: { prune: true, selfHeal: true }

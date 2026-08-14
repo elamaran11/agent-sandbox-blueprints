@@ -41,7 +41,7 @@ spec:
         # Cluster-scoped so the single MicrovmSandbox graph can live in any namespace.
         installScope: cluster
   destination:
-    server: https://kubernetes.default.svc
+    name: ${DESTINATION_CLUSTER}
     namespace: ack-system
   syncPolicy:
     automated:

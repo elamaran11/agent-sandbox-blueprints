@@ -31,7 +31,7 @@ spec:
     targetRevision: {{ .Values.repo.revision | quote }}
     path: infrastructure/gitops/platform/addons/bifrost
   destination:
-    server: https://kubernetes.default.svc
+    name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.bifrost.namespace }}
   syncPolicy:
     automated:

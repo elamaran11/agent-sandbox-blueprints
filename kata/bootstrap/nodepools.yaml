@@ -17,7 +17,7 @@ spec:
     targetRevision: main
     path: kata/nodepools
   destination:
-    server: https://kubernetes.default.svc
+    name: ${DESTINATION_CLUSTER}
     namespace: karpenter
   syncPolicy:
     automated:

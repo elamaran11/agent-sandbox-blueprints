@@ -41,7 +41,7 @@ spec:
               podGC:
                 strategy: OnWorkflowSuccess
   destination:
-    server: https://kubernetes.default.svc
+    name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.argoWorkflows.namespace }}
   syncPolicy:
     automated:

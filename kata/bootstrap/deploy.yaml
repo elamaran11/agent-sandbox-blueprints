@@ -17,7 +17,7 @@ spec:
     targetRevision: main
     path: kata/kata-deploy
   destination:
-    server: https://kubernetes.default.svc
+    name: ${DESTINATION_CLUSTER}
     namespace: kube-system
   syncPolicy:
     automated:

@@ -40,7 +40,7 @@ tasks:
     cmds:
       - |
         missing=""
-        for t in terraform kubectl aws helm task; do
+        for t in terraform kubectl aws helm task envsubst; do
           command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
         done
         if [ -n "$missing" ]; then

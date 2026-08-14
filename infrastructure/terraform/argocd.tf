@@ -32,6 +32,7 @@ locals {
     repo:
       url: ${var.gitops_repo_url}
       revision: ${var.gitops_target_revision}
+    destinationCluster: ${module.eks.cluster_name}
     ${indent(4, local.gitops_values)}
   YAML
 }
@@ -58,7 +59,10 @@ resource "kubectl_manifest" "platform_root" {
           values: |
             ${indent(12, local.platform_values)}
       destination:
-        server: https://kubernetes.default.svc
+        # Managed ArgoCD registers the cluster BY NAME and disables the in-cluster
+        # address, so `server: https://kubernetes.default.svc` is rejected with
+        # 'cluster ... is disabled'. Target the name instead.
+        name: ${module.eks.cluster_name}
         namespace: argocd
       syncPolicy:
         automated:

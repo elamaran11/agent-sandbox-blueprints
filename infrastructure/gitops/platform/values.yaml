@@ -11,6 +11,16 @@ repo:
   url: https://github.com/elamaran11/agent-sandbox-blueprints
   revision: main
 
+# ArgoCD destination cluster NAME.
+#
+# EKS Managed ArgoCD runs its control plane OUTSIDE the cluster and registers the
+# cluster by name, explicitly disabling the in-cluster address. An Application
+# using `destination.server: https://kubernetes.default.svc` is rejected with
+#   cluster "https://kubernetes.default.svc" is disabled
+# so every Application here targets `destination.name` instead. Terraform
+# overrides this with the real cluster name.
+destinationCluster: agent-sandbox-eks
+
 # ── Agent Sandbox (required) ───────────────────────────────────────────────────
 # The Sandbox / SandboxClaim / SandboxTemplate CRDs + operator. BOTH substrates
 # depend on these, so this is not optional.
