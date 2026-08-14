@@ -291,14 +291,46 @@ Everything above is static validation. None of it has run against AWS:
 5. Agent images are **not built or pushed** — both examples reference placeholder ECR
    URLs you must replace.
 
+### Closed since the first draft
+
+- **Deployment-specific values are no longer committed.** The examples carried one
+  account's ID (24 places), its IAM role/bucket names, an Identity Center ARN, a
+  bifrost ClusterIP and `clusterName: hub`. All are placeholders now; `task demo`
+  injects the real values from terraform outputs, the caller identity, and a live
+  lookup of the bifrost Service IP. `task lint:leaks` fails the build if any come
+  back (verified firing on a synthetic leak, and passing on the clean tree).
+- **`kata/nodepools` cluster/role wired to Terraform.** New `karpenter_node_role`,
+  `gitops_repo_url`, `gitops_target_revision` outputs; `task kata` / `task lambda`
+  substitute them through a shared `apply-bootstrap`.
+- **`task kata` / `task lambda` actually work now** — they were running
+  `kubectl apply` on manifests containing `${DESTINATION_CLUSTER}`, so the
+  placeholder was applied literally and the Applications had no valid destination.
+- **`repoURL` no longer pinned to one fork** in the bootstrap manifests.
+- **CI added** (`.github/workflows/ci.yml`): terraform fmt/validate, chart renders,
+  secret + leak scans, and a values-in-sync job.
+- **Review agents default off.** `securityAgent` / `devopsAgent` are a limited
+  preview; a public user's first run must not depend on them.
+- **Sensor label routing confirmed:** `dark-factory` → `df-run` (Kata),
+  `darkfactory-lambda` → `df-run-lambda`. Each example ships only its own
+  WorkflowTemplate, so deploying one leaves the other label inert.
+
 ### Known gaps to close next
 
-- `examples/_shared/values.yaml` and each example's `defaults.yaml` are the upstream
-  values tree carried over wholesale. They work, but should be trimmed to what this
-  blueprint actually uses.
-- `kata/nodepools/values.yaml` still needs your real `clusterName` / `nodeRole` (or
-  wiring to Terraform outputs).
-- Sensor currently routes both trigger labels; confirm the label→template mapping
-  matches the two examples once deployed.
-- No CI yet. A GitHub Action running `task lint` + the render checks would keep this
-  honest.
+- **Managed ArgoCD cannot sync anything yet on a fresh deploy.** Enabling the ARGOCD
+  capability grants its role `AmazonEKSArgoCDClusterPolicy` +
+  `AmazonEKSArgoCDPolicy`, and neither includes workload read or write — only
+  namespaces, Argo CRDs, API discovery, and secrets/configmaps/events in the argocd
+  namespace. So ArgoCD's cluster cache hits the first type it cannot list and aborts
+  the whole sync, leaving every Application at `sync=Unknown` with zero managed
+  resources. With Managed ACK installing ~250 CRDs this is immediate. **Blocked on a
+  decision about how much Kubernetes access the capability role should get** —
+  cluster-admin (one line, what a working cluster in this account uses) vs read-only
+  `AmazonEKSAdminViewPolicy` plus an enumerated write ClusterRole. Note either way
+  that a GitOps engine with prune + selfHeal writing RBAC and CRDs is
+  admin-equivalent in practice.
+- The three example values trees (`_shared/values.yaml` + two `defaults.yaml`) are
+  byte-identical duplicates, because a subchart's values are not visible to parent
+  templates. CI guards the drift, but the real fix is to move each example's
+  WorkflowTemplate into the shared subchart behind a `substrate` value.
+- The values trees are still the upstream set carried over wholesale — they work,
+  but carry keys this blueprint never reads.
