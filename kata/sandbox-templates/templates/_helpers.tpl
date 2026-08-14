@@ -1,27 +1,21 @@
-{{- define "kata-sandbox.namespace" -}}
-{{ .Values.namespace | default "agent-sandbox-system" }}
-{{- end -}}
+{{/*
+Helpers taken from the OAP agent-sandbox chart so the two templates beside them
+stay byte-identical to the working version. The kataUserData helper is
+deliberately NOT copied: it builds nodeadm userData for the Crossplane managed
+node group, which this blueprint replaces with Karpenter nested-virt NodePools.
+*/}}
 
-{{- define "kata-sandbox.labels" -}}
-app.kubernetes.io/name: kata-sandbox-templates
+{{- define "agent-sandbox.labels" -}}
+app.kubernetes.io/name: agent-sandbox
+app.kubernetes.io/part-of: open-agent-platform
 app.kubernetes.io/managed-by: {{ .Release.Service }}
-agent-sandbox.io/substrate: kata
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- end -}}
 
-{{- define "kata-sandbox.selectorLabels" -}}
-app.kubernetes.io/name: kata-sandbox-templates
+{{- define "agent-sandbox.selectorLabels" -}}
+app.kubernetes.io/name: agent-sandbox
 {{- end -}}
 
-{{- /*
-Fail the render rather than deploying a template that can never pull. `task kata`
-substitutes coderImage from terraform; a bare `helm template` for linting still
-works because lint passes the placeholder through unchanged — this only fires when
-someone blanks it out entirely.
-*/ -}}
-{{- define "kata-sandbox.coderImage" -}}
-{{- $img := .Values.coderImage | default "" -}}
-{{- if not $img -}}
-{{- fail "coderImage is empty — set it, or run `task kata` which reads it from the terraform coder_ecr_urls output" -}}
-{{- end -}}
-{{ $img }}:{{ .Values.imageTag | default "latest" }}
+{{- define "agent-sandbox.namespace" -}}
+{{- default "agent-sandbox-system" .Values.namespace -}}
 {{- end -}}

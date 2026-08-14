@@ -2,8 +2,21 @@
 {{- /*
 GitHub webhook EventSource — receives GitHub issue/PR webhooks and publishes
 them onto the EventBus for the Sensor to act on. Runs in the argo-events
-namespace. Exposed via the platform ALB ingress so GitHub can reach it; the
-webhook secret validates the X-Hub-Signature-256 HMAC.
+namespace. The webhook secret validates the X-Hub-Signature-256 HMAC.
+
+REACHABILITY — this is what makes or breaks the whole pipeline. GitHub must be
+able to POST here from the internet. Argo Events creates a ClusterIP Service by
+default, which GitHub cannot reach: nothing ever triggers, and the factory looks
+broken with no error anywhere to explain why.
+
+OAP solves it with an ALB Ingress (ingressClassName: platform) backed by the AWS
+Load Balancer Controller. This blueprint does not install that controller — it is
+the kind of extra surface this repo exists to avoid — so the EventSource Service
+is exposed as a LoadBalancer instead, which EKS satisfies with an NLB out of the
+box. One value, no extra controller.
+
+Set trigger.argoEvents.serviceType=ClusterIP to keep it private and tunnel
+instead; then webhookUrl must point at whatever you expose.
 */ -}}
 apiVersion: argoproj.io/v1alpha1
 kind: EventSource
@@ -14,6 +27,7 @@ metadata:
     {{- include "dark-factory.labels" . | nindent 4 }}
 spec:
   service:
+    type: {{ .Values.trigger.argoEvents.serviceType | default "LoadBalancer" }}
     ports:
       - port: {{ .Values.trigger.argoEvents.webhookPort | default 12000 }}
         targetPort: {{ .Values.trigger.argoEvents.webhookPort | default 12000 }}

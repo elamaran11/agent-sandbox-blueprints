@@ -1,61 +1,75 @@
-# Namespace the pool, claims, and coder pods live in. Must match the examples'
-# warmPool.namespace, or df-run's SandboxClaim lands somewhere the pool isn't.
+# Values for the Kata coder SandboxTemplate + SandboxWarmPool.
+#
+# Taken from the OAP agent-sandbox chart (the version proven end-to-end on the
+# hub) so the templates beside them stay byte-identical to what works. Only two
+# things are changed, both because this repo is public and single-cluster:
+#   * coderTemplate.image and bifrostUrl are placeholders, injected at deploy time
+#     from terraform outputs / a live Service lookup instead of being committed.
+#   * warmPool.targetIdle is 1, not 3 — each idle member is a running Kata VM you
+#     pay for, and one is enough to demonstrate the pattern.
+
+# Namespace the pool, claims and coder pods live in (agent-sandbox.namespace
+# helper). Must match the examples' warmPool.namespace.
 namespace: agent-sandbox-system
 
-# PLACEHOLDER — `task kata` overrides this from the terraform coder_ecr_urls output.
-# Left obviously invalid so a missing override fails at pull time with a clear
-# ImagePullBackOff rather than silently running someone else's image.
-coderImage: SET-BY-TASK-KATA
-imageTag: latest
+kata:
+  # Default VMM for coder sandboxes. Cloud Hypervisor boots fastest; kata-qemu
+  # and kata-fc are also installed by kata/runtimeclasses.
+  defaultRuntimeClass: kata-clh
+  # Steers the pod onto the Karpenter nested-virt kata pool. Set explicitly here
+  # (rather than relying on the RuntimeClass's scheduling block) because that is
+  # what the working version does.
+  nodeSelector:
+    katacontainers.io/kata-runtime: "true"
+  tolerations:
+    - key: kata
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
 
 coderTemplate:
-  # Flow B's SandboxClaim injects DF_* env into the container named `coder`. The
-  # operator REJECTS the claim with EnvVarsInjectionRejected unless the template
-  # opts in here AND exposes a container with that exact name.
-  envVarsInjectionPolicy: Allowed
+  # MUST be Overrides, not Allowed. Flow B's SandboxClaim injects BIFROST_URL,
+  # which the template ALSO sets — and `Allowed` only lets a claim ADD new env,
+  # not replace the template's own. With `Allowed` the claim is rejected with
+  # reason=EnvVarsInjectionRejected and df-run fails at its first step.
+  envVarsInjectionPolicy: Overrides
 
-  # Which VMM the coder runs under. All three RuntimeClasses exist (kata/runtimeclasses):
-  #   kata-clh   Cloud Hypervisor — DEFAULT. Fastest boot, the one to demo.
-  #   kata-qemu  QEMU — only option that does VFIO GPU passthrough.
-  #   kata-fc    Firecracker — needs the devmapper snapshotter, and has NO virtio-fs,
-  #              so a pod under kata-fc CANNOT mount volumes. The gh-token Secret
-  #              below is a volume, so switching to kata-fc requires moving the token
-  #              to env (less safe) or the coder cannot authenticate to GitHub.
-  runtimeClassName: kata-clh
+  # One Secret at /etc/secrets mode 0400, holding gh-token (+ optional bifrost
+  # key). The coder reads them from disk; they are never in env.
+  secretsMount:
+    enabled: true
+    secretName: dark-factory-github
 
-  # NOT set here on purpose: nodeSelector and tolerations. Each RuntimeClass carries
-  # scheduling.nodeSelector + scheduling.tolerations, and the admission controller
-  # force-merges them onto every pod that references it. Repeating them here would
-  # drift from kata/runtimeclasses without any benefit.
+  # PLACEHOLDER — `task kata` injects this from the terraform coder_ecr_urls
+  # output. Left obviously invalid so a missing override fails at pull time.
+  image: SET-BY-TASK-KATA
 
+  # Warm pods start BEFORE any claim exists, so the coder CANNOT run at boot —
+  # it would have no DF_* env. Idle until a claim injects DF_ISSUE_NUMBER, then
+  # exec the baked-in entrypoint. Without this the warm pool crash-loops.
+  command:
+    - /bin/sh
+    - -c
+    - |
+      echo "[sandbox] idle — waiting for a SandboxClaim to inject DF_ISSUE_NUMBER..."
+      while [ -z "${DF_ISSUE_NUMBER:-}" ]; do sleep 5; done
+      echo "[sandbox] claim injected issue #${DF_ISSUE_NUMBER} — starting coder"
+      if [ -f /app/entrypoint.js ]; then exec node /app/entrypoint.js; fi
+      echo "[sandbox] no coder entrypoint in this image (placeholder) — idling"; sleep infinity
+
+  workspaceSizeGi: 5
   resources:
-    requests:
-      cpu: "1"
-      memory: 2Gi
-    limits:
-      # A Kata pod's limits size the guest VM, so this is the coder's real ceiling —
-      # not just a cgroup cap. Too low and builds OOM inside the VM.
-      cpu: "4"
-      memory: 8Gi
+    requests: { cpu: "1", memory: 2Gi }
+    limits: { cpu: "2", memory: 4Gi }
 
-  # Scratch space for the checkout + build. emptyDir, so it dies with the sandbox —
-  # nothing an untrusted coder run wrote can outlive it.
-  workspaceSizeLimit: 20Gi
-
-# The coder is credential-less by design except for these two, mounted read-only at
-# 0400 and never baked into the image. Create them out-of-band (see the example's
-# README); optional: true so the pool still starts before you do.
-secrets:
-  githubSecretName: dark-factory-github
-  bifrostSecretName: dark-factory-bifrost
-  mountPath: /etc/secrets
+  # PLACEHOLDER — injected by `task demo`. A ClusterIP, NOT a service DNS name:
+  # a Kata guest's resolver cannot resolve cluster-internal names.
+  bifrostUrl: ""
 
 warmPool:
-  # df-run's claim step uses warmPoolRef: <name>; a SandboxClaim cannot bind a bare
-  # template. Must match the examples' warmPool.name.
+  enabled: true
   name: coder-warmpool
+  # The SandboxTemplate idle/claimed sandboxes are cloned from.
   templateName: coder-sandbox
-  # Each idle member is a booted Kata VM waiting for a claim. That is what makes a
-  # run start in seconds instead of waiting on nested-virt node provisioning, and
-  # also what makes idle members cost real money. 1 is enough to demo.
-  replicas: 1
+  # 1 warm Kata VM. OAP runs 3; more just means more claims bind instantly.
+  targetIdle: 1

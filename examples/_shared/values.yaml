@@ -377,6 +377,10 @@ trigger:
   argoEvents:
     enabled: true
     namespace: argo-events
+    # LoadBalancer (an NLB on EKS) so GitHub can reach the webhook without adding
+    # an ingress controller. ClusterIP keeps it private — then you must expose it
+    # yourself and point webhookUrl at that.
+    serviceType: LoadBalancer
     eventbusReplicas: 3
     # JetStream version — MUST match an entry in the argo-events controller-config
     # jetstream.versions list (verified live: 'latest' → nats:2.10.10).

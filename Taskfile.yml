@@ -256,7 +256,7 @@ tasks:
 
         echo "  cluster=$CLUSTER account=$ACCOUNT bifrost=${BIFROST_IP:-none} tag=$TAG"
 
-        helm dependency build "$EX" >/dev/null
+        helm dependency update "$EX" >/dev/null
         # shellcheck disable=SC2086
         helm template {{.EXAMPLE}} "$EX" \
           -f "$EX/defaults.yaml" \
@@ -272,6 +272,7 @@ tasks:
       - task: lint:tf
       - task: lint:secrets
       - task: lint:leaks
+      - task: lint:deps
       - task: lint:render
 
   lint:tf:
@@ -364,6 +365,46 @@ tasks:
         PY
         echo "✓ no account or cluster identifiers committed"
 
+  lint:deps:
+    desc: Fail if the committed _shared subchart archive is stale
+    cmds:
+      - |
+        set -uo pipefail
+        # The examples vendor examples/_shared as a COMMITTED
+        # charts/dark-factory-shared-<v>.tgz. `helm dependency build` honours
+        # Chart.lock and will NOT re-package a changed file:// subchart, so editing
+        # _shared and running build leaves the old snapshot in place — the edit is
+        # silently absent from what renders and from what ArgoCD applies. (This
+        # actually happened: a whole session of _shared fixes shipped stale.)
+        #
+        # Re-package into a temp dir and compare against what is committed.
+        fail=0
+        for ex in dark-factory-kata dark-factory-lambda; do
+          tmp="$(mktemp -d)"
+          helm package examples/_shared -d "$tmp" >/dev/null 2>&1
+          fresh="$(find "$tmp" -name '*.tgz' | head -1)"
+          committed="$(find "examples/$ex/charts" -name 'dark-factory-shared-*.tgz' | head -1)"
+          if [ -z "$committed" ]; then
+            echo "✗ examples/$ex has no vendored subchart archive"; fail=1
+          else
+            # Compare CONTENT, not the archive bytes: gzip embeds a timestamp, so
+            # two packagings of identical sources never hash the same.
+            a="$(mktemp -d)"; b="$(mktemp -d)"
+            tar xzf "$fresh" -C "$a"; tar xzf "$committed" -C "$b"
+            if diff -r "$a" "$b" >/dev/null 2>&1; then
+              echo "✓ examples/$ex subchart archive is current"
+            else
+              echo "✗ examples/$ex subchart archive is STALE vs examples/_shared:"
+              diff -rq "$a" "$b" 2>&1 | sed 's/^/    /' | head -10
+              echo "    fix: helm dependency update examples/$ex && git add examples/$ex/charts"
+              fail=1
+            fi
+            rm -rf "$a" "$b"
+          fi
+          rm -rf "$tmp"
+        done
+        exit $fail
+
   lint:render:
     desc: Verify every chart still renders
     cmds:
@@ -371,7 +412,7 @@ tasks:
         set -uo pipefail
         fail=0
         for ex in dark-factory-kata dark-factory-lambda; do
-          helm dependency build "examples/$ex" >/dev/null 2>&1
+          helm dependency update "examples/$ex" >/dev/null 2>&1
           N=$(helm template t "examples/$ex" -f "examples/$ex/defaults.yaml" 2>/dev/null | grep -c '^kind:' || true)
           if [ "$N" -lt 20 ]; then
             echo "✗ examples/$ex rendered only $N objects"; fail=1
@@ -384,17 +425,22 @@ tasks:
         for c in kata/runtimeclasses kata/nodepools lambda-microvm; do
           if helm template t "$c" >/dev/null 2>&1; then echo "✓ $c renders"; else echo "✗ $c failed to render"; fail=1; fi
         done
-        # Needs an image to render (it fails closed on an empty one, by design).
-        if helm template t kata/sandbox-templates --set coderImage=example.dkr.ecr.us-west-2.amazonaws.com/x >/dev/null 2>&1; then
+        if helm template t kata/sandbox-templates \
+             --set coderTemplate.image=example.dkr.ecr.us-west-2.amazonaws.com/x:1 >/dev/null 2>&1; then
           echo "✓ kata/sandbox-templates renders"
         else
           echo "✗ kata/sandbox-templates failed to render"; fail=1
         fi
-        # …and it must FAIL without one, or a pool silently deploys unpullable pods.
-        if helm template t kata/sandbox-templates --set coderImage= >/dev/null 2>&1; then
-          echo "✗ kata/sandbox-templates rendered with an empty coderImage (guard broken)"; fail=1
+        # The SandboxTemplate is kept byte-identical to the working OAP version, so
+        # it has no fail-closed guard on an empty image. The safety net is instead
+        # that the COMMITTED value is an obvious placeholder: if task kata's
+        # injection ever silently stops working, warm-pool members land in
+        # ImagePullBackOff on "SET-BY-TASK-KATA" rather than pulling something real
+        # and unexpected.
+        if grep -q 'image: SET-BY-TASK-KATA' kata/sandbox-templates/values.yaml; then
+          echo "✓ kata/sandbox-templates image is an unmistakable placeholder"
         else
-          echo "✓ kata/sandbox-templates rejects an empty coderImage"
+          echo "✗ kata/sandbox-templates committed a concrete coder image"; fail=1
         fi
         exit $fail
 

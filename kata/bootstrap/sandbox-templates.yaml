@@ -26,10 +26,8 @@ spec:
     helm:
       releaseName: kata-sandbox-templates
       parameters:
-        - name: coderImage
-          value: ${CODER_IMAGE}
-        - name: imageTag
-          value: ${CODER_IMAGE_TAG}
+        - name: coderTemplate.image
+          value: ${CODER_IMAGE}:${CODER_IMAGE_TAG}
   destination:
     name: ${DESTINATION_CLUSTER}
     namespace: agent-sandbox-system
