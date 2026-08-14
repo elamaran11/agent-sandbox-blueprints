@@ -264,6 +264,59 @@ resource "null_resource" "eks_capability" {
   depends_on = [module.eks, null_resource.validate_argocd_idc]
 }
 
+# ── Kubernetes access for the Managed ArgoCD capability ────────────────────────
+#
+# WITHOUT THIS, NOTHING SYNCS. Enabling the ARGOCD capability creates an EKS access
+# entry for your capability role with exactly two managed policies, and neither one
+# grants access to workloads:
+#
+#   AmazonEKSArgoCDClusterPolicy   namespaces, Argo CRDs, API discovery
+#   AmazonEKSArgoCDPolicy          secrets/configmaps/events + Argo CRs, argocd ns
+#
+# So the AWS-run control plane can create Applications but cannot read or write
+# anything they describe. Two failures follow, in order:
+#
+#  1. ArgoCD's cluster cache lists every type registered in the cluster, and ONE
+#     forbidden type aborts the entire sync. Every Application then sits at
+#     sync=Unknown with zero managed resources:
+#
+#       ComparisonError: failed to load initial state of resource
+#       Integration.apigateway.services.k8s.aws: ... is forbidden: User
+#       ".../<cluster>-ArgoCDCapabilityRole/..." cannot list resource
+#       "integrations" ... at the cluster scope
+#
+#     (Which type appears is arbitrary — it is simply the first one it reaches.
+#     Managed ACK registers ~250 CRDs, so this is immediate and unavoidable.)
+#
+#  2. Even with a healthy cache, syncing an addon needs write access to the kinds
+#     its chart contains: Deployments, Services, RBAC, CRDs, webhooks.
+#
+# WHY cluster-admin, stated plainly: a GitOps engine running with prune + selfHeal
+# over platform addons has to create ClusterRoles and CRDs, and anything that can
+# write RBAC can escalate itself. An enumerated allow-list would look tighter while
+# granting the same effective power, and it would break every time someone adds an
+# addon with a new API group. So this grants cluster-admin explicitly rather than
+# implying a limit that isn't real.
+#
+# THE PRACTICAL CONSEQUENCE: write access to the GitOps repo is equivalent to
+# cluster-admin on this cluster. Protect the branch ArgoCD tracks accordingly.
+#
+# The access ENTRY already exists (the capability created it); this only associates
+# an additional policy with it.
+resource "aws_eks_access_policy_association" "argocd_cluster_admin" {
+  count = var.enable_managed_argocd ? 1 : 0
+
+  cluster_name  = module.eks.cluster_name
+  principal_arn = aws_iam_role.capability["ARGOCD"].arn
+  policy_arn    = "arn:${data.aws_partition.current.partition}:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
+
+  depends_on = [null_resource.eks_capability]
+}
+
 # Wait for the managed ArgoCD control plane to have registered its CRDs before
 # the root Application is applied.
 #
