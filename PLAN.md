@@ -314,6 +314,23 @@ Everything above is static validation. None of it has run against AWS:
   `darkfactory-lambda` → `df-run-lambda`. Each example ships only its own
   WorkflowTemplate, so deploying one leaves the other label inert.
 
+- **Agent images built and pushed** to ECR in 940019131157/us-west-2, arch and digest
+  verified against the local builds:
+
+  | repo | tags | arch | size |
+  |---|---|---|---|
+  | `agent-sandbox/dark-factory-coder` | `v0.1.0`, `latest` | amd64 | 370 MB |
+  | `agent-sandbox/dark-factory-coder-microvm` | `v0.1.0`, `latest` | arm64 | 357 MB |
+
+- **The Kata substrate had no SandboxTemplate and no SandboxWarmPool** — only
+  lambda-microvm did. `demo-kata` claimed `coder-warmpool`, nothing bound it, and the
+  run stalled at step 1 with no pod. Added `kata/sandbox-templates` mirroring the
+  Lambda contract (container `coder`, `envVarsInjectionPolicy: Allowed`), with the
+  image injected from terraform and a render that fails closed on an empty image.
+
+- **`deployTest` now defaults off.** It referenced a `deploy-test` ECR repo terraform
+  never creates, and this blueprint ships no build context for it.
+
 ### Known gaps to close next
 
 - **Managed ArgoCD cannot sync anything yet on a fresh deploy.** Enabling the ARGOCD
