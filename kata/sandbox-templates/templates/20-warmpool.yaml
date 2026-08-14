@@ -1,0 +1,22 @@
+{{- /*
+The pool df-run claims from. SandboxClaim.spec.warmPoolRef is REQUIRED — a claim
+cannot bind a bare SandboxTemplate — so without this the Kata pipeline has nothing
+to claim and the run stalls at its first step.
+
+Keeping replicas >= 1 is also what makes the demo feel instant: the member is an
+already-booted Kata VM, so a claim binds in seconds rather than waiting for Karpenter
+to provision a nested-virt node and kata-deploy to install the runtime (~5 min).
+That warm member is a running VM you pay for while idle — the honest tradeoff, and
+the reason this is 1 and not 3.
+*/ -}}
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ .Values.warmPool.name }}
+  namespace: {{ include "kata-sandbox.namespace" . }}
+  labels:
+    {{- include "kata-sandbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.warmPool.replicas | default 1 }}
+  sandboxTemplateRef:
+    name: {{ .Values.warmPool.templateName }}

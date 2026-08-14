@@ -1,0 +1,61 @@
+# Namespace the pool, claims, and coder pods live in. Must match the examples'
+# warmPool.namespace, or df-run's SandboxClaim lands somewhere the pool isn't.
+namespace: agent-sandbox-system
+
+# PLACEHOLDER — `task kata` overrides this from the terraform coder_ecr_urls output.
+# Left obviously invalid so a missing override fails at pull time with a clear
+# ImagePullBackOff rather than silently running someone else's image.
+coderImage: SET-BY-TASK-KATA
+imageTag: latest
+
+coderTemplate:
+  # Flow B's SandboxClaim injects DF_* env into the container named `coder`. The
+  # operator REJECTS the claim with EnvVarsInjectionRejected unless the template
+  # opts in here AND exposes a container with that exact name.
+  envVarsInjectionPolicy: Allowed
+
+  # Which VMM the coder runs under. All three RuntimeClasses exist (kata/runtimeclasses):
+  #   kata-clh   Cloud Hypervisor — DEFAULT. Fastest boot, the one to demo.
+  #   kata-qemu  QEMU — only option that does VFIO GPU passthrough.
+  #   kata-fc    Firecracker — needs the devmapper snapshotter, and has NO virtio-fs,
+  #              so a pod under kata-fc CANNOT mount volumes. The gh-token Secret
+  #              below is a volume, so switching to kata-fc requires moving the token
+  #              to env (less safe) or the coder cannot authenticate to GitHub.
+  runtimeClassName: kata-clh
+
+  # NOT set here on purpose: nodeSelector and tolerations. Each RuntimeClass carries
+  # scheduling.nodeSelector + scheduling.tolerations, and the admission controller
+  # force-merges them onto every pod that references it. Repeating them here would
+  # drift from kata/runtimeclasses without any benefit.
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      # A Kata pod's limits size the guest VM, so this is the coder's real ceiling —
+      # not just a cgroup cap. Too low and builds OOM inside the VM.
+      cpu: "4"
+      memory: 8Gi
+
+  # Scratch space for the checkout + build. emptyDir, so it dies with the sandbox —
+  # nothing an untrusted coder run wrote can outlive it.
+  workspaceSizeLimit: 20Gi
+
+# The coder is credential-less by design except for these two, mounted read-only at
+# 0400 and never baked into the image. Create them out-of-band (see the example's
+# README); optional: true so the pool still starts before you do.
+secrets:
+  githubSecretName: dark-factory-github
+  bifrostSecretName: dark-factory-bifrost
+  mountPath: /etc/secrets
+
+warmPool:
+  # df-run's claim step uses warmPoolRef: <name>; a SandboxClaim cannot bind a bare
+  # template. Must match the examples' warmPool.name.
+  name: coder-warmpool
+  templateName: coder-sandbox
+  # Each idle member is a booted Kata VM waiting for a claim. That is what makes a
+  # run start in seconds instead of waiting on nested-virt node provisioning, and
+  # also what makes idle members cost real money. 1 is enough to demo.
+  replicas: 1

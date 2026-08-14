@@ -1,0 +1,48 @@
+# The coder SandboxTemplate + SandboxWarmPool that Flow B claims from.
+#
+# Sync-wave 2: AFTER the RuntimeClasses (wave 1) and kata-deploy, because a warm-pool
+# member references runtimeClassName: kata-clh and stays Pending until the runtime is
+# actually installed on a node. Ordering it earlier makes a healthy cluster look
+# broken for the first few minutes.
+#
+# coderImage is substituted by `task kata` from the terraform coder_ecr_urls output —
+# build and push it first (see the example README), or the pool members will sit in
+# ImagePullBackOff.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kata-sandbox-templates
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
+    path: kata/sandbox-templates
+    helm:
+      releaseName: kata-sandbox-templates
+      parameters:
+        - name: coderImage
+          value: ${CODER_IMAGE}
+        - name: imageTag
+          value: ${CODER_IMAGE_TAG}
+  destination:
+    name: ${DESTINATION_CLUSTER}
+    namespace: agent-sandbox-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

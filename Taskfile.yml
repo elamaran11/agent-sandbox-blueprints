@@ -164,11 +164,25 @@ tasks:
         export GITOPS_REPO_URL="$(out gitops_repo_url)"
         export GITOPS_REVISION="$(out gitops_target_revision)"
 
+        # The Kata warm pool boots this image. Which repo depends on the arch the
+        # substrate needs: Kata pods are amd64, Lambda MicroVM is ARM64-only.
+        ECR_JSON="$(terraform output -json coder_ecr_urls 2>/dev/null || echo '{}')"
+        export CODER_IMAGE="$(printf '%s' "$ECR_JSON" \
+          | python3 -c "import json,sys;print(json.load(sys.stdin).get('{{.ECR_KEY | default \"coder\"}}',''))")"
+        export CODER_IMAGE_TAG="{{.IMAGE_TAG | default \"latest\"}}"
+
         echo "  cluster:  $DESTINATION_CLUSTER"
         echo "  nodeRole: $KARPENTER_NODE_ROLE"
         echo "  repo:     $GITOPS_REPO_URL @ $GITOPS_REVISION"
+        echo "  image:    ${CODER_IMAGE:-<none>}:$CODER_IMAGE_TAG"
 
-        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION'
+        if [ -z "$CODER_IMAGE" ]; then
+          echo "  WARNING: no coder ECR repo in terraform outputs — warm-pool members"
+          echo "           will fail to pull. Set create_coder_ecr_repos=true and build"
+          echo "           the image (see examples/dark-factory-kata/README.md)."
+        fi
+
+        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG'
         for f in ../../{{.DIR}}/*.yaml; do
           envsubst "$VARS" < "$f" | kubectl apply -f -
         done
@@ -369,6 +383,18 @@ tasks:
         for c in kata/runtimeclasses kata/nodepools lambda-microvm; do
           if helm template t "$c" >/dev/null 2>&1; then echo "✓ $c renders"; else echo "✗ $c failed to render"; fail=1; fi
         done
+        # Needs an image to render (it fails closed on an empty one, by design).
+        if helm template t kata/sandbox-templates --set coderImage=example.dkr.ecr.us-west-2.amazonaws.com/x >/dev/null 2>&1; then
+          echo "✓ kata/sandbox-templates renders"
+        else
+          echo "✗ kata/sandbox-templates failed to render"; fail=1
+        fi
+        # …and it must FAIL without one, or a pool silently deploys unpullable pods.
+        if helm template t kata/sandbox-templates --set coderImage= >/dev/null 2>&1; then
+          echo "✗ kata/sandbox-templates rendered with an empty coderImage (guard broken)"; fail=1
+        else
+          echo "✓ kata/sandbox-templates rejects an empty coderImage"
+        fi
         exit $fail
 
   # ── Teardown ────────────────────────────────────────────────────────────────
