@@ -153,7 +153,7 @@ postVerdictReview: true
 # which writes their IDs into `secretName`. IAM (IRSA role, service role, S3
 # bucket, OIDC provider) is committed Terraform in iam/securityagent.tf. The
 # per-run review step (scripts/security-agent.sh) reads the Secret. All values
-# below are the live, validated resources (account 940019131157, us-west-2).
+# below are placeholders — fill them in for YOUR account if you enable the agent.
 securityAgent:
   # OFF by default: the AWS Security Agent is a limited preview and is not
   # available to every account. The pipeline runs without it (the review gate

@@ -330,6 +330,7 @@ tasks:
               -e 'arn:aws:iam::[0-9]{12}:' \
               -e 'arn:aws:sso:::instance/ssoins-[0-9a-f]{16}' \
               -e 'clusterName: (hub|spoke)' \
+              -e '(account|acct)[^0-9]{0,12}[0-9]{12}' \
             2>/dev/null > /tmp/df-leaks.raw || true
         python3 - <<'PY'
         import re, sys

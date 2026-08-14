@@ -314,7 +314,7 @@ Everything above is static validation. None of it has run against AWS:
   `darkfactory-lambda` → `df-run-lambda`. Each example ships only its own
   WorkflowTemplate, so deploying one leaves the other label inert.
 
-- **Agent images built and pushed** to ECR in 940019131157/us-west-2, arch and digest
+- **Agent images built and pushed** to ECR in the target account/region, arch and digest
   verified against the local builds:
 
   | repo | tags | arch | size |
