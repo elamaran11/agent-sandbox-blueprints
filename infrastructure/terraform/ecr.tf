@@ -13,9 +13,15 @@
 # why the MicroVM build role keeps ecr:Get*/BatchGetImage.
 
 locals {
+  # Namespaced under project_name (ECR allows "/" in names) so that:
+  #   - two deployments of this blueprint in one account cannot collide, and
+  #   - it does not fight over generic names like "dark-factory-coder" that some
+  #     other stack in the account may already own.
+  # Verified the hard way: a bare "dark-factory-coder" already existed in the
+  # target account and CreateRepository failed with RepositoryAlreadyExists.
   coder_repos = var.create_coder_ecr_repos ? {
-    coder         = "dark-factory-coder"
-    coder_microvm = "dark-factory-coder-microvm"
+    coder         = "${var.project_name}/dark-factory-coder"
+    coder_microvm = "${var.project_name}/dark-factory-coder-microvm"
   } : {}
 }
 
