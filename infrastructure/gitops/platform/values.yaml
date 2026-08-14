@@ -55,6 +55,23 @@ argoEvents:
     name: argo-events
     version: "2.4.15"
 
+# ── Karpenter — REQUIRED for the Kata substrate ───────────────────────────────
+# Not optional if you want Kata: nested-virt nodes are provisioned by Karpenter
+# NodePools, and without the controller the kata/nodepools Application cannot
+# create a single object. Terraform builds all of Karpenter's AWS-side plumbing;
+# this installs the controller that uses it.
+karpenter:
+  enabled: true
+  # 1.13.0 is a FLOOR: EC2NodeClass spec.cpuOptions.nestedVirtualization was added
+  # in 1.13 (aws/karpenter-provider-aws#9043) and Kata cannot boot without it.
+  chart:
+    repoURL: public.ecr.aws/karpenter
+    name: karpenter
+    version: "1.13.0"
+  replicas: 2
+  # Label on the managed node group. Karpenter must not run on nodes it manages.
+  nodeRole: system
+
 # ── Bifrost — in-cluster LLM gateway (optional) ───────────────────────────────
 # The Kata agent calls models through this so requests can be traced centrally.
 # The Lambda MicroVM agent bypasses it (it runs outside the cluster network and

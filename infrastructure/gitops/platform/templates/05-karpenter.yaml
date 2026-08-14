@@ -1,0 +1,77 @@
+{{- if .Values.karpenter.enabled }}
+{{- /*
+Karpenter — REQUIRED by the Kata substrate, and previously missing entirely.
+
+Terraform creates everything Karpenter needs (interruption SQS queue, node role +
+instance profile + access entry, controller role, and a Pod Identity association
+for kube-system/karpenter) but never installed the controller itself. So the CRDs
+did not exist, kata/nodepools could not create a single EC2NodeClass or NodePool
+("one or more synchronization tasks are not valid"), no nested-virt node was ever
+provisioned, and the warm pool's Sandbox sat at DependenciesNotReady. Nothing in
+that chain names Karpenter as the cause.
+
+Version 1.13.0 is a FLOOR, not a preference: EC2NodeClass
+spec.cpuOptions.nestedVirtualization landed in 1.13
+(aws/karpenter-provider-aws#9043) and Kata cannot run without it. Pair with
+Kubernetes >= 1.36.
+
+Sync-wave -1: the CRDs must exist before kata/nodepools (wave 0) applies.
+
+nodeSelector role=system pins the controller to the managed node group, so
+Karpenter never runs on a node it is itself managing — a node it drains out from
+under itself takes the controller with it. Credentials come from Pod Identity, so
+the ServiceAccount needs no IRSA annotation, but its name and namespace MUST match
+the association Terraform created (kube-system/karpenter).
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.karpenter.chart.repoURL | quote }}
+    chart: {{ .Values.karpenter.chart.name | quote }}
+    targetRevision: {{ .Values.karpenter.chart.version | quote }}
+    helm:
+      releaseName: karpenter
+      valuesObject:
+        settings:
+          clusterName: {{ .Values.destinationCluster | quote }}
+          # Terraform names the queue "<cluster>-karpenter" (karpenter.tf).
+          interruptionQueue: {{ printf "%s-karpenter" .Values.destinationCluster | quote }}
+        replicas: {{ .Values.karpenter.replicas | default 2 }}
+        serviceAccount:
+          # No IRSA annotation on purpose — Pod Identity supplies credentials.
+          name: karpenter
+        nodeSelector:
+          role: {{ .Values.karpenter.nodeRole | default "system" }}
+        tolerations:
+          - key: role
+            operator: Equal
+            value: {{ .Values.karpenter.nodeRole | default "system" }}
+            effect: NoSchedule
+  destination:
+    name: {{ .Values.destinationCluster | quote }}
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      # prune: false — pruning Karpenter's CRDs would orphan every NodeClaim and
+      # leak the EC2 instances behind them.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}
