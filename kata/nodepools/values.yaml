@@ -1,6 +1,8 @@
-# Set by Terraform at install time via ArgoCD helm parameters
-clusterName: agent-sandbox-eks
-nodeRole: KarpenterNodeRole-agent-sandbox-eks
+# PLACEHOLDERS — do not edit. `task kata` overrides both from terraform outputs
+# (cluster_name, karpenter_node_role) as ArgoCD helm parameters, so a fork or a
+# different project_name needs no change here.
+clusterName: SET-BY-TASK-KATA
+nodeRole: SET-BY-TASK-KATA
 # No kataAmiId: NodeClasses use the stock al2023@latest AMI and kata-deploy
 # installs Kata at runtime — nothing is baked with Packer anymore.
 

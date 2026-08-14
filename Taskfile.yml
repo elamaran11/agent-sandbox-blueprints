@@ -132,14 +132,46 @@ tasks:
   kata:
     desc: Add the Kata micro-VM substrate (clh + qemu + fc)
     cmds:
-      - kubectl apply -f kata/bootstrap/
+      - task: apply-bootstrap
+        vars: { DIR: kata/bootstrap }
       - echo "✓ Kata substrate applied — RuntimeClasses kata-clh, kata-qemu, kata-fc"
+      - 'echo "  nodes take ~5 min: Karpenter provisions, then kata-deploy installs the runtime"'
 
   lambda:
     desc: Add the AWS Lambda MicroVM substrate
     cmds:
-      - kubectl apply -f lambda-microvm/bootstrap/
+      - task: apply-bootstrap
+        vars: { DIR: lambda-microvm/bootstrap }
       - echo "✓ Lambda MicroVM substrate applied"
+
+  apply-bootstrap:
+    internal: true
+    # The bootstrap Applications carry placeholders instead of hardcoded values,
+    # so this repo works forked and under any project_name. Everything they need
+    # comes from terraform outputs — never from the operator's shell or a
+    # hand-edited values file.
+    #
+    # envsubst is deliberately given an explicit variable list: without it, it
+    # would also eat legitimate $-syntax inside the manifests (Argo Workflows
+    # templates and container args are full of {{...}} and $VAR).
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - |
+        set -euo pipefail
+        out() { terraform output -raw "$1"; }
+        export DESTINATION_CLUSTER="$(out cluster_name)"
+        export KARPENTER_NODE_ROLE="$(out karpenter_node_role)"
+        export GITOPS_REPO_URL="$(out gitops_repo_url)"
+        export GITOPS_REVISION="$(out gitops_target_revision)"
+
+        echo "  cluster:  $DESTINATION_CLUSTER"
+        echo "  nodeRole: $KARPENTER_NODE_ROLE"
+        echo "  repo:     $GITOPS_REPO_URL @ $GITOPS_REVISION"
+
+        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION'
+        for f in ../../{{.DIR}}/*.yaml; do
+          envsubst "$VARS" < "$f" | kubectl apply -f -
+        done
 
   # ── Examples ────────────────────────────────────────────────────────────────
   demo-kata:

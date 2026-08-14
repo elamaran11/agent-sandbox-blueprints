@@ -1,6 +1,11 @@
 # Karpenter EC2NodeClasses + NodePools that provision nested-virtualization nodes.
 # Wave 0: nodes must be provisionable before kata-deploy has anywhere to install.
-# Update values.yaml (clusterName, nodeRole) to match your terraform outputs.
+#
+# clusterName and nodeRole come from terraform outputs, substituted by `task kata`
+# — they are NOT edited into kata/nodepools/values.yaml. Getting either wrong is a
+# silent failure mode: Karpenter creates the NodeClaim, the instance boots, and it
+# never joins the cluster (wrong cluster name in userData, or an instance profile
+# with no access entry). Nodes just never appear.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -13,9 +18,17 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
-    targetRevision: main
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
     path: kata/nodepools
+    helm:
+      releaseName: kata-nodepools
+      # Override the placeholders committed in kata/nodepools/values.yaml.
+      parameters:
+        - name: clusterName
+          value: ${DESTINATION_CLUSTER}
+        - name: nodeRole
+          value: ${KARPENTER_NODE_ROLE}
   destination:
     name: ${DESTINATION_CLUSTER}
     namespace: karpenter

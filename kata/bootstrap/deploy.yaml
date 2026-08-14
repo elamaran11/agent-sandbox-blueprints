@@ -13,8 +13,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/elamaran11/agent-sandbox-blueprints
-    targetRevision: main
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
     path: kata/kata-deploy
   destination:
     name: ${DESTINATION_CLUSTER}
