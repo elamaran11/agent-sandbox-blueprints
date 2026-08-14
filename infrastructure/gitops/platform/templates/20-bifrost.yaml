@@ -58,6 +58,22 @@ spec:
           # because a Kata guest's resolver cannot resolve cluster service names.
           type: ClusterIP
           port: {{ .Values.bifrost.port | default 8080 }}
+  # Bifrost is a StatefulSet, and spec.volumeClaimTemplates is IMMUTABLE. The API
+  # server defaults fields inside it that are not in the chart's output — an
+  # embedded apiVersion/kind, volumeMode: Filesystem, and a status block — so the
+  # live object never matches the manifest. ArgoCD cannot patch an immutable field,
+  # so without this the Application sits OutOfSync forever while being perfectly
+  # Healthy, which reads like a broken deploy and trains people to ignore status.
+  #
+  # Verified this is only server-side defaulting: diffing the rendered
+  # volumeClaimTemplates against the live one shows no config difference.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: bifrost
+      namespace: {{ .Values.bifrost.namespace }}
+      jsonPointers:
+        - /spec/volumeClaimTemplates
   destination:
     name: {{ .Values.destinationCluster | quote }}
     namespace: {{ .Values.bifrost.namespace }}

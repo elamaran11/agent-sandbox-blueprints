@@ -1,5 +1,9 @@
 apiVersion: v2
 name: kata
-description: Kata RuntimeClasses (Cloud Hypervisor, QEMU, Firecracker) + the devmapper StorageClass Firecracker requires
+description: >-
+  Kata RuntimeClasses: kata-clh (Cloud Hypervisor), kata-qemu, kata-fc
+  (Firecracker). Firecracker's devmapper thin-pool is built in EC2NodeClass
+  userData by kata/nodepools, not by a StorageClass; the cluster's default
+  StorageClass is created in infrastructure/terraform/storage.tf.
 type: application
 version: 0.1.0
