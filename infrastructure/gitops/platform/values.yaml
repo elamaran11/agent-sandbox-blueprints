@@ -69,6 +69,9 @@ bifrost:
   # The Kata agent reaches the gateway here, by ClusterIP (a Kata guest cannot
   # resolve cluster service DNS).
   port: 8080
+  # The upstream chart has NO default image tag and fails to render without one.
+  # Must be a real tag from hub.docker.com/r/maximhq/bifrost/tags.
+  imageTag: "v1.5.0"
   chart:
     repoURL: https://maximhq.github.io/bifrost/helm-charts
     name: bifrost

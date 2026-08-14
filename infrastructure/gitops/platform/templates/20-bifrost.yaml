@@ -41,6 +41,11 @@ spec:
     helm:
       releaseName: bifrost
       valuesObject:
+        image:
+          # REQUIRED by the upstream chart — it has no default and fails the render
+          # with "ERROR: image.tag is required" rather than picking appVersion.
+          tag: {{ .Values.bifrost.imageTag | quote }}
+          pullPolicy: IfNotPresent
         serviceAccount:
           create: true
           # MUST match llm_gateway_service_account in terraform: the Pod Identity
