@@ -28,6 +28,25 @@ output "oidc_provider_arn" {
   value       = module.eks.oidc_provider_arn
 }
 
+# The substrate blueprints (kata/, lambda-microvm/) are applied by `task kata` and
+# `task lambda`, not by Terraform. Their Applications need these three values, and
+# hardcoding them in a committed manifest breaks as soon as someone forks the repo
+# or changes project_name — so the Taskfile reads them from here and substitutes.
+output "karpenter_node_role" {
+  description = "IAM role name Karpenter attaches to nodes (kata/ nodepools need this)"
+  value       = aws_iam_role.karpenter_node.name
+}
+
+output "gitops_repo_url" {
+  description = "Git repo ArgoCD reads manifests from"
+  value       = var.gitops_repo_url
+}
+
+output "gitops_target_revision" {
+  description = "Git revision ArgoCD tracks"
+  value       = var.gitops_target_revision
+}
+
 output "kubeconfig_cmd" {
   description = "Command to point kubectl at this cluster"
   value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
