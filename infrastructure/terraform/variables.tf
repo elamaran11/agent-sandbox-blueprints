@@ -64,9 +64,61 @@ variable "gitops_platform_path" {
 # the capability available, and install the equivalent yourself via Helm.
 
 variable "enable_managed_argocd" {
-  description = "Enable the EKS Managed ArgoCD capability (AWS runs the ArgoCD control plane)"
+  description = "Enable the EKS Managed ArgoCD capability (AWS runs the ArgoCD control plane). REQUIRES AWS IAM Identity Center — see argocd_idc_* below."
   type        = bool
   default     = true
+}
+
+# ── Managed ArgoCD ⇒ AWS IAM Identity Center is REQUIRED ──────────────────────
+# The CreateCapability API rejects an ARGOCD capability without a configuration
+# block, and that configuration must name an Identity Center instance plus at
+# least one identity mapped to the ADMIN role — that is how you log in to the
+# AWS-managed ArgoCD (there is no local admin password).
+#
+# Discover these values with:
+#   aws sso-admin list-instances --region <region>
+#   aws identitystore list-groups --identity-store-id <IdentityStoreId> --region <region>
+
+variable "argocd_idc_instance_arn" {
+  description = "IAM Identity Center instance ARN for Managed ArgoCD SSO (e.g. arn:aws:sso:::instance/ssoins-xxxx). Required when enable_managed_argocd=true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.argocd_idc_instance_arn == "" || can(regex("^arn:aws[a-z-]*:sso:::instance/", var.argocd_idc_instance_arn))
+    error_message = "argocd_idc_instance_arn must be an Identity Center instance ARN (arn:aws:sso:::instance/ssoins-...)."
+  }
+}
+
+variable "argocd_idc_region" {
+  description = "Region the Identity Center instance lives in. Defaults to var.region."
+  type        = string
+  default     = ""
+}
+
+variable "argocd_namespace" {
+  description = "Namespace the Managed ArgoCD capability runs its in-cluster components in"
+  type        = string
+  default     = "argocd"
+}
+
+variable "argocd_admin_identities" {
+  description = <<-EOT
+    Identity Center principals granted the ArgoCD ADMIN role. At least one is
+    required when enable_managed_argocd=true — without it nobody can log in.
+    Example:
+      [{ id = "78b1f3c0-...", type = "SSO_GROUP" }]
+  EOT
+  type = list(object({
+    id   = string
+    type = string # SSO_GROUP | SSO_USER
+  }))
+  default = []
+
+  validation {
+    condition     = alltrue([for i in var.argocd_admin_identities : contains(["SSO_GROUP", "SSO_USER"], i.type)])
+    error_message = "argocd_admin_identities[].type must be SSO_GROUP or SSO_USER."
+  }
 }
 
 variable "enable_managed_ack" {

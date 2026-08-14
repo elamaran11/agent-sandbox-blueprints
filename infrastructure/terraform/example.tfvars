@@ -10,6 +10,16 @@
 # otherwise point at the upstream blueprint.
 gitops_repo_url = "https://github.com/elamaran11/agent-sandbox-blueprints"
 
+# Managed ArgoCD REQUIRES AWS IAM Identity Center — there is no local admin
+# password, SSO is the only way to log in. Discover these with:
+#   aws sso-admin list-instances --region us-west-2
+#   aws identitystore list-groups --identity-store-id <IdentityStoreId> --region us-west-2
+# (Or set enable_managed_argocd = false and install ArgoCD via Helm.)
+argocd_idc_instance_arn = "arn:aws:sso:::instance/ssoins-REPLACE_ME"
+argocd_admin_identities = [
+  { id = "REPLACE_ME-group-or-user-id", type = "SSO_GROUP" },
+]
+
 # ── Common overrides ──────────────────────────────────────────────────────────
 
 # Pinned to us-west-2 because AWS Lambda MicroVM is only available in select

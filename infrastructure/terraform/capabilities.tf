@@ -27,14 +27,72 @@
 #      declares `schema.group: kro.run`.
 
 locals {
+  # ARGOCD requires a configuration block naming an Identity Center instance and
+  # at least one ADMIN identity — the API rejects the capability without it, and
+  # there is no local admin password for AWS-managed ArgoCD, so SSO is the only
+  # way in. Built here and passed to the CLI as a file (see below).
+  argocd_configuration = {
+    argoCd = {
+      namespace = var.argocd_namespace
+      awsIdc = {
+        idcInstanceArn = var.argocd_idc_instance_arn
+        idcRegion      = var.argocd_idc_region != "" ? var.argocd_idc_region : var.region
+      }
+      rbacRoleMappings = [{
+        role       = "ADMIN"
+        identities = var.argocd_admin_identities
+      }]
+    }
+  }
+
   # capabilityName is lowercase (that is what the API returns and expects).
   capabilities = {
-    ARGOCD = { enabled = var.enable_managed_argocd, name = "argocd", role_suffix = "ArgoCDCapabilityRole" }
-    ACK    = { enabled = var.enable_managed_ack, name = "ack", role_suffix = "ACKCapabilityRole" }
-    KRO    = { enabled = var.enable_managed_kro, name = "kro", role_suffix = "KROCapabilityRole" }
+    ARGOCD = {
+      enabled     = var.enable_managed_argocd
+      name        = "argocd"
+      role_suffix = "ArgoCDCapabilityRole"
+      config      = jsonencode(local.argocd_configuration)
+    }
+    ACK = {
+      enabled     = var.enable_managed_ack
+      name        = "ack"
+      role_suffix = "ACKCapabilityRole"
+      config      = ""
+    }
+    KRO = {
+      enabled     = var.enable_managed_kro
+      name        = "kro"
+      role_suffix = "KROCapabilityRole"
+      config      = ""
+    }
   }
 
   enabled_capabilities = { for type, c in local.capabilities : type => c if c.enabled }
+}
+
+# Fail early with a clear message rather than letting the API reject the
+# capability minutes into an apply.
+resource "null_resource" "validate_argocd_idc" {
+  count = var.enable_managed_argocd ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = var.argocd_idc_instance_arn != "" && length(var.argocd_admin_identities) > 0
+      error_message = <<-EOT
+        Managed ArgoCD requires AWS IAM Identity Center.
+
+        Set both of these in terraform.tfvars:
+          argocd_idc_instance_arn = "arn:aws:sso:::instance/ssoins-..."
+          argocd_admin_identities = [{ id = "<group-or-user-id>", type = "SSO_GROUP" }]
+
+        Discover them with:
+          aws sso-admin list-instances --region ${var.region}
+          aws identitystore list-groups --identity-store-id <IdentityStoreId> --region ${var.region}
+
+        Or set enable_managed_argocd = false and install ArgoCD via Helm instead.
+      EOT
+    }
+  }
 }
 
 # Each capability assumes a role you own, so AWS-run controllers act with
@@ -111,11 +169,17 @@ resource "null_resource" "eks_capability" {
     type    = each.key
     name    = each.value.name
     role    = aws_iam_role.capability[each.key].arn
+    config  = sha256(each.value.config)
   }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
-    command     = <<-EOT
+    environment = {
+      # Passed via env (not interpolated into the command) so JSON quoting cannot
+      # be mangled by the shell.
+      CAPABILITY_CONFIG = each.value.config
+    }
+    command = <<-EOT
       set -euo pipefail
       CLUSTER="${module.eks.cluster_name}"
       REGION="${var.region}"
@@ -129,21 +193,50 @@ resource "null_resource" "eks_capability" {
         exit 0
       fi
 
+      ARGS=(--cluster-name "$CLUSTER" --region "$REGION" --type "$TYPE"
+            --capability-name "$NAME" --role-arn "$ROLE"
+            --delete-propagation-policy RETAIN)
+
+      # ARGOCD carries a configuration block (Identity Center + RBAC mappings).
+      # Write it to a temp file and pass file:// so no JSON survives the shell.
+      if [ -n "$${CAPABILITY_CONFIG:-}" ]; then
+        CFG="$(mktemp)"; trap 'rm -f "$CFG"' EXIT
+        printf '%s' "$CAPABILITY_CONFIG" > "$CFG"
+        ARGS+=(--configuration "file://$CFG")
+      fi
+
       echo "enabling capability $TYPE (name=$NAME) on $CLUSTER ..."
       # RETAIN is the only supported deletion policy: Kubernetes resources the
       # capability created are kept if the capability is removed.
-      if ! aws eks create-capability \
-             --cluster-name "$CLUSTER" \
-             --region "$REGION" \
-             --type "$TYPE" \
-             --capability-name "$NAME" \
-             --role-arn "$ROLE" \
-             --delete-propagation-policy RETAIN; then
+      #
+      # RETRY: the capability role is created moments earlier in this same apply,
+      # and IAM is eventually consistent — CreateCapability then rejects it with
+      # "The trust policy for the provided role is invalid" even though the trust
+      # policy is correct. Retry until IAM has propagated.
+      OK=0
+      for attempt in $(seq 1 12); do
+        if OUT=$(aws eks create-capability "$${ARGS[@]}" 2>&1); then OK=1; break; fi
+        echo "$OUT" | sed 's/^/    /'
+        if echo "$OUT" | grep -q 'trust policy for the provided role is invalid'; then
+          echo "  attempt $attempt: IAM role not propagated yet, retrying in 10s ..."
+          sleep 10
+          continue
+        fi
+        # Any other error is not a propagation delay — stop immediately.
+        break
+      done
+
+      if [ "$OK" -ne 1 ]; then
         echo ""
         echo "ERROR: could not enable the $TYPE capability."
-        echo "  It may not be available in $REGION or for this account."
-        echo "  Set enable_managed_$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')=false in terraform.tfvars"
-        echo "  and install the equivalent via Helm instead."
+        if echo "$${OUT:-}" | grep -q 'Configuration is required'; then
+          echo "  $TYPE needs a configuration block. For ARGOCD that means AWS IAM"
+          echo "  Identity Center: set argocd_idc_instance_arn and argocd_admin_identities."
+        else
+          echo "  It may not be available in $REGION or for this account."
+          echo "  Set enable_managed_$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')=false in terraform.tfvars"
+          echo "  and install the equivalent via Helm instead."
+        fi
         exit 1
       fi
 
@@ -168,7 +261,7 @@ resource "null_resource" "eks_capability" {
     command    = "echo 'NOTE: EKS capability ${self.triggers.type} left enabled on ${self.triggers.cluster}; remove with: aws eks delete-capability --cluster-name ${self.triggers.cluster} --region ${self.triggers.region} --capability-name ${self.triggers.name}'"
   }
 
-  depends_on = [module.eks]
+  depends_on = [module.eks, null_resource.validate_argocd_idc]
 }
 
 # Wait for the managed ArgoCD control plane to have registered its CRDs before
