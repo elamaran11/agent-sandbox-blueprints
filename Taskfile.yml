@@ -167,9 +167,10 @@ tasks:
         # The Kata warm pool boots this image. Which repo depends on the arch the
         # substrate needs: Kata pods are amd64, Lambda MicroVM is ARM64-only.
         ECR_JSON="$(terraform output -json coder_ecr_urls 2>/dev/null || echo '{}')"
+        ECR_KEY='{{.ECR_KEY | default "coder"}}'
         export CODER_IMAGE="$(printf '%s' "$ECR_JSON" \
-          | python3 -c "import json,sys;print(json.load(sys.stdin).get('{{.ECR_KEY | default \"coder\"}}',''))")"
-        export CODER_IMAGE_TAG="{{.IMAGE_TAG | default \"latest\"}}"
+          | python3 -c "import json,sys;print(json.load(sys.stdin).get('$ECR_KEY',''))")"
+        export CODER_IMAGE_TAG='{{.IMAGE_TAG | default "latest"}}'
 
         echo "  cluster:  $DESTINATION_CLUSTER"
         echo "  nodeRole: $KARPENTER_NODE_ROLE"
@@ -233,10 +234,10 @@ tasks:
         ECR_JSON="$(terraform -chdir="$TF" output -json coder_ecr_urls 2>/dev/null || echo '{}')"
         pick() { printf '%s' "$ECR_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('$1',''))"; }
         CODER_REPO="$(pick coder)"
-        TAG="{{.IMAGE_TAG | default \"latest\"}}"
+        TAG='{{.IMAGE_TAG | default "latest"}}'
 
         # Bifrost by ClusterIP, not DNS: a Kata guest cannot resolve svc names.
-        BIFROST_NS="{{.BIFROST_NS | default \"bifrost\"}}"
+        BIFROST_NS='{{.BIFROST_NS | default "bifrost"}}'
         BIFROST_IP="$(kubectl get svc -n "$BIFROST_NS" -l app.kubernetes.io/name=bifrost \
                         -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || echo "")"
         if [ -z "$BIFROST_IP" ]; then
@@ -272,6 +273,7 @@ tasks:
       - task: lint:tf
       - task: lint:secrets
       - task: lint:leaks
+      - task: lint:tasks
       - task: lint:deps
       - task: lint:render
 
@@ -364,6 +366,39 @@ tasks:
             sys.exit(1)
         PY
         echo "✓ no account or cluster identifiers committed"
+
+  lint:tasks:
+    desc: Fail if any task's Go template does not evaluate
+    cmds:
+      - |
+        set -uo pipefail
+        # `task --list` only PARSES the YAML — it never evaluates the Go templates
+        # inside cmds. So an action whose quotes are backslash-escaped (invalid
+        # inside a template action) passes every other check and only explodes when
+        # someone actually runs the task. Note this comment cannot show the broken
+        # syntax literally -- task templates the whole cmd string, comments
+        # included, so the example would break this task too. That is exactly how
+        # `task kata` shipped broken:
+        #   template: :12: unexpected "\" in operand
+        #
+        # --dry renders each command without executing it, which forces evaluation.
+        fail=0
+        for t in up kata lambda demo-kata demo-lambda status down lint; do
+          if out="$(task --dry "$t" 2>&1)"; then
+            echo "✓ $t template evaluates"
+          else
+            # A task can legitimately fail --dry on a missing prerequisite (no
+            # cluster, no tfvars). Only a template error is a code bug.
+            if printf '%s' "$out" | grep -q 'template:'; then
+              echo "✗ $t has a TEMPLATE error:"
+              printf '%s\n' "$out" | grep 'template:' | sed 's/^/    /'
+              fail=1
+            else
+              echo "✓ $t template evaluates (task itself would need a live env)"
+            fi
+          fi
+        done
+        exit $fail
 
   lint:deps:
     desc: Fail if the committed _shared subchart archive is stale
