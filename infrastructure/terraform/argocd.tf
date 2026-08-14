@@ -37,6 +37,44 @@ locals {
   YAML
 }
 
+# ── Register this cluster with the managed ArgoCD ─────────────────────────────
+#
+# Managed ArgoCD runs its control plane OUTSIDE the cluster, so it does not have
+# an implicit "in-cluster" destination — the in-cluster address is explicitly
+# disabled. Applications must target a cluster BY NAME, and a cluster only exists
+# once it is registered.
+#
+# Registration is a Secret in the host cluster's argocd namespace, labelled
+# argocd.argoproj.io/secret-type=cluster. Two non-obvious details, both verified
+# against a working managed-ArgoCD cluster in this account:
+#   * `server` is the EKS cluster **ARN**, not an https:// URL
+#   * `name` is what Application.spec.destination.name must match
+#
+# Without this, every Application sits Unknown/Unknown with
+#   InvalidSpecError: there are no clusters with this name: <cluster>
+resource "kubernetes_secret" "argocd_cluster" {
+  count = var.enable_managed_argocd ? 1 : 0
+
+  metadata {
+    name      = module.eks.cluster_name
+    namespace = var.argocd_namespace
+
+    labels = {
+      "argocd.argoproj.io/secret-type" = "cluster"
+    }
+  }
+
+  data = {
+    name   = module.eks.cluster_name
+    server = module.eks.cluster_arn
+    config = jsonencode({ tlsClientConfig = { insecure = false } })
+  }
+
+  type = "Opaque"
+
+  depends_on = [null_resource.wait_for_argocd]
+}
+
 resource "kubectl_manifest" "platform_root" {
   count = var.enable_managed_argocd ? 1 : 0
 
@@ -78,5 +116,8 @@ resource "kubectl_manifest" "platform_root" {
             maxDuration: 5m
   YAML
 
-  depends_on = [null_resource.wait_for_argocd]
+  depends_on = [
+    null_resource.wait_for_argocd,
+    kubernetes_secret.argocd_cluster,
+  ]
 }
