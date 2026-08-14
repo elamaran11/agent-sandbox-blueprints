@@ -1,0 +1,78 @@
+# Static checks only — no AWS credentials, nothing deployed.
+#
+# What this can catch: terraform that does not parse or is unformatted, charts that
+# stop rendering, a credential or one deployment's account IDs getting committed.
+#
+# What it cannot catch: anything requiring a cluster. Whether Karpenter provisions a
+# nested-virt node, whether a pod boots under kata-clh, whether a Microvm reaches
+# RUNNING — all of that needs a real account and is verified by hand (see
+# docs/TROUBLESHOOTING.md). Do not read a green check here as "the blueprint works".
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # lint:leaks and lint:secrets scan `git ls-files`, so the checkout must be
+          # a real repo (it is) — but they only look at the current tree, not history.
+          fetch-depth: 1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Install task
+        run: |
+          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+          task --version
+
+      - name: terraform fmt + validate
+        run: task lint:tf
+
+      - name: No credentials committed
+        run: task lint:secrets
+
+      - name: No account or cluster identifiers committed
+        run: task lint:leaks
+
+      - name: Every chart renders
+        run: task lint:render
+
+  # The two checks above are cheap and catch the mistakes that actually happened
+  # while building this repo. This one guards the specific trap that the three
+  # example values trees are duplicated by design (a subchart's values are not
+  # visible to parent templates), so an edit to one must be made to all three.
+  values-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: examples/_shared/values.yaml matches both defaults.yaml
+        run: |
+          set -euo pipefail
+          fail=0
+          for ex in dark-factory-kata dark-factory-lambda; do
+            if diff -q examples/_shared/values.yaml "examples/$ex/defaults.yaml" >/dev/null; then
+              echo "✓ examples/$ex/defaults.yaml in sync"
+            else
+              echo "✗ examples/$ex/defaults.yaml has drifted from examples/_shared/values.yaml:"
+              diff examples/_shared/values.yaml "examples/$ex/defaults.yaml" || true
+              fail=1
+            fi
+          done
+          exit $fail
