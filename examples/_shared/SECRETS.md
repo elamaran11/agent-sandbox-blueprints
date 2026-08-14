@@ -1,27 +1,51 @@
 # Secrets
 
-Both examples need the same two GitHub credentials. **Neither ever goes in git or in a
-values file** — manifests reference only the Secret's *name* (`github.secretName`).
+**Nothing here ever goes in git or in a values file** — manifests reference only a
+Secret's *name*.
 
-| Key | What it is |
-|---|---|
-| `token` | A GitHub token the agent uses to clone, push a branch, open a PR, and comment |
-| `webhookSecret` | The HMAC secret you set on the GitHub webhook, so the EventSource can verify deliveries are genuine |
+You need the same GitHub token in **two** places. Two components read it, in
+different namespaces, under different key names. Creating only one is the most
+common way to get stuck:
+
+| Secret | Namespace | Keys | Read by |
+|---|---|---|---|
+| `dark-factory-github` | `argo-events` | `token`, `webhookSecret` | EventSource — verifies webhook HMAC, registers the webhook |
+| `dark-factory-github` | `agent-sandbox-system` | `gh-token` | The coder inside the sandbox — clones, pushes, opens the PR |
+
+Two details that fail unhelpfully if missed:
+
+* The coder's key is **`gh-token`**, not `token`. The SandboxTemplate mounts the whole
+  Secret at `/etc/secrets` and the agent reads `/etc/secrets/gh-token`.
+* The coder's Secret is **not optional**. Until it exists, every warm-pool member sits
+  in `ContainerCreating` indefinitely with
+  `MountVolume.SetUp failed ... secret "dark-factory-github" not found`. The pod is
+  scheduled and the Kata node is healthy, so this looks like a micro-VM problem when
+  it is only a missing Secret. Create it **before** `task kata` — or delete the stuck
+  pods afterwards and the warm pool will recreate them.
 
 ## Option A — quickstart (`kubectl`)
 
 Fine for a demo on a throwaway repo.
 
 ```bash
+GH_TOKEN="ghp_your_token_here"
 # A random HMAC secret for the webhook; you will paste this into GitHub below.
 WEBHOOK_SECRET="$(openssl rand -hex 20)"
 
-kubectl create namespace argo-events --dry-run=client -o yaml | kubectl apply -f -
+for NS in argo-events agent-sandbox-system; do
+  kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
+done
 
+# 1. For the EventSource (webhook verification + registration).
 kubectl create secret generic dark-factory-github \
   --namespace argo-events \
-  --from-literal=token="ghp_your_token_here" \
+  --from-literal=token="$GH_TOKEN" \
   --from-literal=webhookSecret="$WEBHOOK_SECRET"
+
+# 2. For the coder in the sandbox — note the DIFFERENT key name.
+kubectl create secret generic dark-factory-github \
+  --namespace agent-sandbox-system \
+  --from-literal=gh-token="$GH_TOKEN"
 
 echo "Webhook secret (paste into GitHub): $WEBHOOK_SECRET"
 ```
