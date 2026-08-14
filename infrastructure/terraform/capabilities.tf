@@ -27,22 +27,90 @@
 #      declares `schema.group: kro.run`.
 
 locals {
+  # capabilityName is lowercase (that is what the API returns and expects).
   capabilities = {
-    ARGOCD = var.enable_managed_argocd
-    ACK    = var.enable_managed_ack
-    KRO    = var.enable_managed_kro
+    ARGOCD = { enabled = var.enable_managed_argocd, name = "argocd", role_suffix = "ArgoCDCapabilityRole" }
+    ACK    = { enabled = var.enable_managed_ack, name = "ack", role_suffix = "ACKCapabilityRole" }
+    KRO    = { enabled = var.enable_managed_kro, name = "kro", role_suffix = "KROCapabilityRole" }
   }
 
-  enabled_capabilities = [for name, enabled in local.capabilities : name if enabled]
+  enabled_capabilities = { for type, c in local.capabilities : type => c if c.enabled }
+}
+
+# Each capability assumes a role you own, so AWS-run controllers act with
+# permissions you control. The trust principal is the capabilities service.
+resource "aws_iam_role" "capability" {
+  for_each = local.enabled_capabilities
+
+  name = "${local.cluster_name}-${each.value.role_suffix}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "capabilities.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+
+  tags = local.tags
+}
+
+# ArgoCD and KRO need no AWS permissions — they only act inside the cluster.
+# ACK does: its controllers create real AWS resources. Scope this to what the
+# blueprint actually uses (the Lambda MicroVM graph creates IAM roles + an S3
+# artifact bucket) rather than granting broad access.
+resource "aws_iam_role_policy" "ack_capability" {
+  count = var.enable_managed_ack ? 1 : 0
+
+  name = "ack-blueprint-resources"
+  role = aws_iam_role.capability["ACK"].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ArtifactBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:CreateBucket", "s3:DeleteBucket", "s3:GetBucket*", "s3:PutBucket*",
+          "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+          "s3:ListAllMyBuckets",
+        ]
+        Resource = ["arn:${data.aws_partition.current.partition}:s3:::*-microvm-artifacts",
+        "arn:${data.aws_partition.current.partition}:s3:::*-microvm-artifacts/*"]
+      },
+      {
+        Sid    = "MicroVMRoles"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole",
+          "iam:AttachRolePolicy", "iam:DetachRolePolicy",
+          "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
+          "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
+          "iam:UpdateAssumeRolePolicy",
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-*"
+      },
+      {
+        Sid      = "PassMicroVMRoles"
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-*"
+      },
+    ]
+  })
 }
 
 resource "null_resource" "eks_capability" {
-  for_each = toset(local.enabled_capabilities)
+  for_each = local.enabled_capabilities
 
   triggers = {
     cluster = module.eks.cluster_name
     region  = var.region
     type    = each.key
+    name    = each.value.name
+    role    = aws_iam_role.capability[each.key].arn
   }
 
   provisioner "local-exec" {
@@ -52,6 +120,8 @@ resource "null_resource" "eks_capability" {
       CLUSTER="${module.eks.cluster_name}"
       REGION="${var.region}"
       TYPE="${each.key}"
+      NAME="${each.value.name}"
+      ROLE="${aws_iam_role.capability[each.key].arn}"
 
       if aws eks list-capabilities --cluster-name "$CLUSTER" --region "$REGION" \
            --query "capabilities[?type=='$TYPE'].type" --output text 2>/dev/null | grep -q "$TYPE"; then
@@ -59,15 +129,33 @@ resource "null_resource" "eks_capability" {
         exit 0
       fi
 
-      echo "enabling capability $TYPE on $CLUSTER ..."
-      if ! aws eks create-capability --cluster-name "$CLUSTER" --region "$REGION" --type "$TYPE"; then
+      echo "enabling capability $TYPE (name=$NAME) on $CLUSTER ..."
+      # RETAIN is the only supported deletion policy: Kubernetes resources the
+      # capability created are kept if the capability is removed.
+      if ! aws eks create-capability \
+             --cluster-name "$CLUSTER" \
+             --region "$REGION" \
+             --type "$TYPE" \
+             --capability-name "$NAME" \
+             --role-arn "$ROLE" \
+             --delete-propagation-policy RETAIN; then
         echo ""
         echo "ERROR: could not enable the $TYPE capability."
-        echo "  This capability may not be available in $REGION or for this account."
+        echo "  It may not be available in $REGION or for this account."
         echo "  Set enable_managed_$(echo "$TYPE" | tr '[:upper:]' '[:lower:]')=false in terraform.tfvars"
         echo "  and install the equivalent via Helm instead."
         exit 1
       fi
+
+      # Creation is asynchronous; wait for ACTIVE so dependent resources do not
+      # race the controllers coming up.
+      for i in $(seq 1 60); do
+        S=$(aws eks list-capabilities --cluster-name "$CLUSTER" --region "$REGION" \
+              --query "capabilities[?type=='$TYPE'].status" --output text 2>/dev/null || echo "")
+        [ "$S" = "ACTIVE" ] && { echo "capability $TYPE is ACTIVE"; exit 0; }
+        echo "  $TYPE status=$${S:-pending} ..."; sleep 10
+      done
+      echo "ERROR: $TYPE did not reach ACTIVE within 10 minutes"; exit 1
     EOT
   }
 
@@ -77,24 +165,41 @@ resource "null_resource" "eks_capability" {
   provisioner "local-exec" {
     when       = destroy
     on_failure = continue
-    command    = "echo 'NOTE: EKS capability ${self.triggers.type} left enabled on ${self.triggers.cluster}; remove with: aws eks delete-capability --cluster-name ${self.triggers.cluster} --region ${self.triggers.region} --type ${self.triggers.type}'"
+    command    = "echo 'NOTE: EKS capability ${self.triggers.type} left enabled on ${self.triggers.cluster}; remove with: aws eks delete-capability --cluster-name ${self.triggers.cluster} --region ${self.triggers.region} --capability-name ${self.triggers.name}'"
   }
 
   depends_on = [module.eks]
 }
 
-# Wait for the managed ArgoCD control plane to be serving before the root
-# Application is applied, otherwise the CRDs may not exist yet.
+# Wait for the managed ArgoCD control plane to have registered its CRDs before
+# the root Application is applied.
+#
+# REPEATABILITY: this must NOT depend on the operator's local kubeconfig or
+# current-context — on a fresh machine neither exists yet. So it writes a
+# throwaway kubeconfig from the cluster we just created and uses only that.
 resource "null_resource" "wait_for_argocd" {
   count = var.enable_managed_argocd ? 1 : 0
+
+  triggers = {
+    cluster = module.eks.cluster_name
+    region  = var.region
+  }
 
   provisioner "local-exec" {
     interpreter = ["/bin/bash", "-c"]
     command     = <<-EOT
       set -euo pipefail
-      echo "waiting for ArgoCD CRDs to be registered ..."
+      CLUSTER="${module.eks.cluster_name}"
+      REGION="${var.region}"
+
+      KUBECONFIG_TMP="$(mktemp)"
+      trap 'rm -f "$KUBECONFIG_TMP"' EXIT
+      aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION" \
+        --kubeconfig "$KUBECONFIG_TMP" >/dev/null
+
+      echo "waiting for the ArgoCD capability to register its CRDs ..."
       for i in $(seq 1 60); do
-        if kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+        if KUBECONFIG="$KUBECONFIG_TMP" kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
           echo "ArgoCD is ready"; exit 0
         fi
         sleep 10
