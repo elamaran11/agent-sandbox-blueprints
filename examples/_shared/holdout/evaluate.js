@@ -28,12 +28,20 @@ const { execFileSync } = require("child_process");
 const REPO_DIR = process.env.REPO_DIR || "/workspace/repo";
 const DIFF = (() => { try { return fs.readFileSync(process.env.DIFF || "/tmp/diff.patch", "utf8"); } catch { return ""; } })();
 const SCENARIOS = process.env.SCENARIOS || "/holdout/scenarios.json";
-const BIFROST_URL = (process.env.BIFROST_URL || "http://172.20.181.17:8080").replace(/\/+$/, "");
+// Deliberately no fallback: a stale hardcoded ClusterIP would send every judge
+// call into a black hole and read as "the judge disagreed". The chart always sets
+// this (task demo resolves the live bifrost Service IP).
+const BIFROST_URL = (process.env.BIFROST_URL || "").replace(/\/+$/, "");
 const JUDGE_MODEL = process.env.JUDGE_MODEL || "us.amazon.nova-pro-v1:0";
 const JUDGE_RUNS = parseInt(process.env.JUDGE_RUNS || "3", 10);
 const JUDGE_QUORUM = parseInt(process.env.JUDGE_QUORUM || "2", 10);
 const THRESHOLD = parseFloat(process.env.THRESHOLD || "0.90");
 const OUT = process.env.OUT || "/tmp/holdout-result.json";
+
+if (!BIFROST_URL) {
+  console.error("BIFROST_URL is not set — cannot reach the judge model");
+  process.exit(1);
+}
 
 // Run one scenario's executable test against the built code. Green = exit 0.
 function runTest(scenario) {

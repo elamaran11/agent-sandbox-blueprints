@@ -10,7 +10,10 @@
 # The image is built by Lambda from a code-artifact ZIP (this Dockerfile + hook-server.js)
 # in S3 — NOT pushed to ECR as a normal image. The base coder image IS pulled from ECR
 # during that build (the MicrovmImage build role keeps ecr:Get*).
-ARG CODER_IMAGE=940019131157.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder:v0.2.5-arm64
+# No default on purpose: a baked ECR URI would build FROM another account's image
+# (or fail obscurely in a fork). publish.sh passes --build-arg CODER_IMAGE=...
+# resolved from the terraform coder_ecr_urls output.
+ARG CODER_IMAGE
 FROM ${CODER_IMAGE}
 
 WORKDIR /app

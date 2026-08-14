@@ -26,6 +26,11 @@ spec:
       valuesObject:
         microvm:
           enabled: true
+          # Substituted by `task lambda` from terraform cluster_name. The Pod
+          # Identity association is cluster-scoped, so a wrong name here means the
+          # ACK controller silently comes up with no credentials.
+          podIdentity:
+            clusterName: ${DESTINATION_CLUSTER}
   destination:
     name: ${DESTINATION_CLUSTER}
     namespace: agent-sandbox-system

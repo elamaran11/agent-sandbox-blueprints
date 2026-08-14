@@ -41,7 +41,10 @@ coder:
   runTimeoutMinutes: 30
 
 bifrost:
-  url: http://172.20.181.17:8080  # ClusterIP (Kata VM guest DNS cannot resolve svc names)
+  # ClusterIP, NOT a service DNS name: a Kata guest's resolver cannot resolve
+  # cluster-internal names. Left empty on purpose — `task demo` resolves the
+  # live ClusterIP from the bifrost Service and injects it.
+  url: ""
 
 # ── Observability: LLM tracing → Langfuse (provided by Bifrost) ──────────────
 # LLM traces/cost/tokens are exported to Langfuse by BIFROST's telemetry plugin
@@ -96,12 +99,12 @@ holdout:
   # us.amazon.nova-pro-v1:0 → 200 on /anthropic.
   judgeModel: us.amazon.nova-pro-v1:0
   # Bifrost gateway the judge reaches (ClusterIP — same reason as the coder).
-  bifrostUrl: http://172.20.181.17:8080
+  bifrostUrl: ""  # injected by `task demo` (see bifrost.url)
   # v1: report-only (advisory). Set true to make a failed gate fail the workflow.
   blocking: false
   # Node image for the eval step: needs git + node + the languages the executable
   # tests run in. Reuse the coder image (has git/node/python/go + is already in ECR).
-  evalImage: 940019131157.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder:v0.2.5
+  evalImage: ""  # injected by `task demo` from the coder ECR repo
 
 # ── P3: Reviews via the REAL AWS Frontier Agents ─────────────────────────────
 # Two independent reviewers, run OUTSIDE the coder VM (the coder never grades
@@ -152,16 +155,21 @@ postVerdictReview: true
 # per-run review step (scripts/security-agent.sh) reads the Secret. All values
 # below are the live, validated resources (account 940019131157, us-west-2).
 securityAgent:
-  enabled: true
+  # OFF by default: the AWS Security Agent is a limited preview and is not
+  # available to every account. The pipeline runs without it (the review gate
+  # is skipped). See docs/PREREQUISITES.md before enabling.
+  enabled: false
   region: us-west-2
   # Agent space name the bootstrap Job finds-or-creates (adopts as-0fa9566... ).
   spaceName: dark-factory
   # Committed IAM (iam/securityagent.tf) outputs — the chart consumes, never mints.
-  irsaRoleArn: arn:aws:iam::940019131157:role/df-securityagent-irsa
-  serviceRoleArn: arn:aws:iam::940019131157:role/service-role/df-securityagent-service-role
-  diffBucket: dark-factory-secagent-940019131157-us-west-2
+  # Set these only if you enable the agent — they are outputs of the IAM you
+  # create for it (see docs/PREREQUISITES.md), not something this chart mints.
+  irsaRoleArn: ""
+  serviceRoleArn: ""
+  diffBucket: ""
   # IAM Identity Center instance (create-application → console renders the space).
-  idcInstanceArn: arn:aws:sso:::instance/ssoins-7907c8a7931ceef3
+  idcInstanceArn: ""  # arn:aws:sso:::instance/ssoins-... (your Identity Center)
   # Secret (argo ns) the bootstrap Job writes + the review step reads.
   secretName: dark-factory-securityagent
   # Bootstrap Job image — MUST have a current aws-cli v2 (the securityagent
@@ -218,7 +226,8 @@ securityAgent:
 # App check-run and WAIT for it. All paths need ONE one-time console connect
 # (repo ↔ Agent Space); that is the single manual step in the pipeline (docs §6.2).
 devopsAgent:
-  enabled: true
+  # OFF by default, same reason as securityAgent above.
+  enabled: false
   # How the df-run devops-gate confirms the DevOps Agent cleared:
   #   check → wait for the DevOps Agent GitHub App's check-run (DEFAULT, native).
   #   label → wait for a coder-applied handoffLabel (fallback if you drive DevOps
@@ -245,7 +254,7 @@ devopsAgent:
 
 # Image for hub-side agent steps: needs aws-cli + kubectl + node + git + zip.
 # Reuse the coder image (has node/git/zip); the bootstrap Job adds aws-cli.
-reviewImage: 940019131157.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder:v0.2.5
+reviewImage: ""  # injected by `task demo` from the coder ECR repo
 
 # ── P3b: Iterate on PR comment ───────────────────────────────────────────────
 # A human comment on a Dark Factory PR routes back to the coder as a revision
@@ -281,8 +290,8 @@ microvm:
   # that SA to the SAME lambda-microvms role the bridge/lifecycle use (least-privilege;
   # additive; no existing role policy changes). ACK eks PodIdentityAssociation.
   podIdentity:
-    clusterName: hub
-    accountId: "940019131157"
+    clusterName: ""  # injected by `task demo` from terraform cluster_name
+    accountId: ""    # injected by `task demo` from the caller identity
     # role: <clusterName>-ack-lambdamicrovms-controller
   workflowServiceAccount: dark-factory-workflow
 
@@ -322,7 +331,7 @@ deployTest:
   terraformPath: "infra"      # terraform working dir (repo uses infra/ + app/ layout)
   # Purpose-built image with kubectl + terraform + node + git + curl (content-aware
   # deploy-test needs both toolchains). Built from examples/dark-factory/deploy-test.
-  image: 940019131157.dkr.ecr.us-west-2.amazonaws.com/dark-factory-deploy-test:v0.1.0
+  image: ""  # injected by `task demo` from the deploy-test ECR repo
   # Overall step deadline and the per-workload readiness wait (k8s only).
   timeoutSeconds: 600
   readyTimeoutSeconds: 120

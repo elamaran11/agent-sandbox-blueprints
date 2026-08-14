@@ -58,7 +58,8 @@ microvm:
   # Managed-ACK iam+eks controllers on the hub. The bridge/lifecycle SAs reuse this
   # same role (they also call lambda-microvms).
   podIdentity:
-    clusterName: hub
+    # PLACEHOLDER — `task lambda` overrides this from terraform cluster_name.
+    clusterName: SET-BY-TASK-LAMBDA
     controllerNamespace: ack-system
     controllerServiceAccount: ack-lambdamicrovms-controller
 

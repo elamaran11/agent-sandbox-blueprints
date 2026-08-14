@@ -190,29 +190,77 @@ tasks:
     internal: true
     # These are Helm charts, not plain manifests — the pipeline templates are
     # heavily parameterized, so they must be rendered before they can be applied.
-    # defaults.yaml carries the committed chart defaults; your values.yaml
-    # (gitignored) layers your repo, token Secret name, labels and gates on top.
+    #
+    # Values arrive in three layers, lowest precedence first:
+    #   1. defaults.yaml      committed chart defaults
+    #   2. your values.yaml   gitignored: repo, token Secret name, labels, gates
+    #   3. --set below        anything account- or cluster-specific
+    #
+    # Layer 3 exists so NOTHING account-specific is committed. Image URIs, the
+    # bifrost address and the Pod Identity binding all differ per deployment; they
+    # used to be literals in defaults.yaml, which leaked one account's IDs into a
+    # public repo and silently pointed forks at resources they cannot reach.
     cmds:
       - |
+        set -euo pipefail
         EX="examples/{{.EXAMPLE}}"
         if [ ! -f "$EX/values.yaml" ]; then
           echo "MISSING $EX/values.yaml"
           echo "  cp $EX/values.example.yaml $EX/values.yaml   # then edit it"
           exit 1
         fi
+
+        TF="{{.TF_DIR}}"
+        out() { terraform -chdir="$TF" output -raw "$1" 2>/dev/null || echo ""; }
+        CLUSTER="$(out cluster_name)"
+        ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+
+        # Image URIs from the ECR repos terraform created, at the tag you built.
+        ECR_JSON="$(terraform -chdir="$TF" output -json coder_ecr_urls 2>/dev/null || echo '{}')"
+        pick() { printf '%s' "$ECR_JSON" | python3 -c "import json,sys;print(json.load(sys.stdin).get('$1',''))"; }
+        CODER_REPO="$(pick coder)"
+        DEPLOY_REPO="$(pick deploy-test)"
+        TAG="{{.IMAGE_TAG | default \"latest\"}}"
+
+        # Bifrost by ClusterIP, not DNS: a Kata guest cannot resolve svc names.
+        BIFROST_NS="{{.BIFROST_NS | default \"bifrost\"}}"
+        BIFROST_IP="$(kubectl get svc -n "$BIFROST_NS" -l app.kubernetes.io/name=bifrost \
+                        -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || echo "")"
+        if [ -z "$BIFROST_IP" ]; then
+          echo "WARNING: no bifrost Service found in namespace $BIFROST_NS."
+          echo "         The coder and the holdout judge will have no LLM gateway."
+          echo "         Is the platform synced? Check: task status"
+        fi
+
+        SET=""
+        add() { [ -n "$2" ] && SET="$SET --set-string $1=$2" || true; }
+        add bifrost.url            "${BIFROST_IP:+http://$BIFROST_IP:8080}"
+        add holdout.bifrostUrl     "${BIFROST_IP:+http://$BIFROST_IP:8080}"
+        add reviewImage            "${CODER_REPO:+$CODER_REPO:$TAG}"
+        add holdout.evalImage      "${CODER_REPO:+$CODER_REPO:$TAG}"
+        add deployTest.image       "${DEPLOY_REPO:+$DEPLOY_REPO:$TAG}"
+        add microvm.podIdentity.clusterName "$CLUSTER"
+        add microvm.podIdentity.accountId   "$ACCOUNT"
+
+        echo "  cluster=$CLUSTER account=$ACCOUNT bifrost=${BIFROST_IP:-none} tag=$TAG"
+
         helm dependency build "$EX" >/dev/null
+        # shellcheck disable=SC2086
         helm template {{.EXAMPLE}} "$EX" \
           -f "$EX/defaults.yaml" \
           -f "$EX/values.yaml" \
+          $SET \
           | kubectl apply -f -
       - 'echo "✓ pipeline deployed — add the trigger label to a GitHub issue to start a run"'
 
   # ── Hygiene ─────────────────────────────────────────────────────────────────
   lint:
-    desc: Lint terraform, YAML, and check for committed secrets
+    desc: Lint terraform, YAML, check for committed secrets and environment leaks
     cmds:
       - task: lint:tf
       - task: lint:secrets
+      - task: lint:leaks
+      - task: lint:render
 
   lint:tf:
     desc: terraform fmt + validate
@@ -248,6 +296,82 @@ tasks:
           fi
         done
         echo "✓ no secrets tracked"
+
+  lint:leaks:
+    desc: Fail if one deployment's account, IPs, or cluster names are committed
+    cmds:
+      - |
+        # This is a public blueprint. Anything account- or cluster-specific must
+        # arrive at deploy time (terraform outputs / task demo --set), never as a
+        # committed literal — both because it leaks, and because a fork that
+        # inherits someone else's IDs fails in confusing ways.
+        #
+        # Narrow patterns only, so prose in docs and the fixed in-cluster addresses
+        # (172.20.0.1 apiserver, service CIDRs) stay quiet.
+        #
+        # Path and content filters are applied SEPARATELY on purpose. Filtering the
+        # whole "path:line:text" string against a placeholder word list means a path
+        # containing "example" excludes every hit under examples/ — which is exactly
+        # where the deployment-specific values live, so the check silently passed.
+        git ls-files -z | xargs -0 grep -nIE \
+              -e '[0-9]{12}\.dkr\.ecr\.' \
+              -e 'arn:aws:iam::[0-9]{12}:' \
+              -e 'arn:aws:sso:::instance/ssoins-[0-9a-f]{16}' \
+              -e 'clusterName: (hub|spoke)' \
+            2>/dev/null > /tmp/df-leaks.raw || true
+        python3 - <<'PY'
+        import re, sys
+
+        # Prose may show the shape of these values; code may not carry a real one.
+        SKIP_PATHS = ("docs/", "README", "PLAN", "CONTRIBUTING", "SECURITY")
+        # Only the matched TEXT is tested for placeholder-ness.
+        PLACEHOLDER = re.compile(r"REPLACE|<[A-Za-z_]|your-|YOUR|placeholder|123456789012|ACCOUNT_ID", re.I)
+
+        bad = []
+        try:
+            lines = open("/tmp/df-leaks.raw").read().splitlines()
+        except FileNotFoundError:
+            lines = []
+        for line in lines:
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            path, _, text = parts
+            if path.startswith(SKIP_PATHS):
+                continue
+            if PLACEHOLDER.search(text):
+                continue
+            bad.append(line)
+
+        if bad:
+            print("✗ deployment-specific value committed (use terraform outputs / task demo instead):")
+            for b in bad:
+                print("   ", b.strip())
+            sys.exit(1)
+        PY
+        echo "✓ no account or cluster identifiers committed"
+
+  lint:render:
+    desc: Verify every chart still renders
+    cmds:
+      - |
+        set -uo pipefail
+        fail=0
+        for ex in dark-factory-kata dark-factory-lambda; do
+          helm dependency build "examples/$ex" >/dev/null 2>&1
+          N=$(helm template t "examples/$ex" -f "examples/$ex/defaults.yaml" 2>/dev/null | grep -c '^kind:' || true)
+          if [ "$N" -lt 20 ]; then
+            echo "✗ examples/$ex rendered only $N objects"; fail=1
+          else
+            echo "✓ examples/$ex renders $N objects"
+          fi
+        done
+        N=$(helm template t infrastructure/gitops/platform 2>/dev/null | grep -c '^kind:' || true)
+        if [ "$N" -ge 4 ]; then echo "✓ platform renders $N Applications"; else echo "✗ platform rendered $N"; fail=1; fi
+        for c in kata/runtimeclasses kata/nodepools lambda-microvm; do
+          if helm template t "$c" >/dev/null 2>&1; then echo "✓ $c renders"; else echo "✗ $c failed to render"; fail=1; fi
+        done
+        exit $fail
 
   # ── Teardown ────────────────────────────────────────────────────────────────
   down:
