@@ -55,6 +55,21 @@ argoEvents:
     name: argo-events
     version: "2.4.15"
 
+# ── External Secrets Operator — how the GitHub PAT reaches the cluster ────────
+# The examples ship ExternalSecret objects, so without this `task demo` fails with
+# 'no matches for kind ExternalSecret'. Turn both this and
+# github.externalSecret.enabled off together if you prefer creating Secrets by hand.
+externalSecrets:
+  enabled: true
+  namespace: external-secrets
+  serviceAccount: external-secrets
+  chart:
+    repoURL: https://charts.external-secrets.io
+    name: external-secrets
+    # 2.9.0 serves external-secrets.io/v1 — the API the example templates use.
+    # 0.x charts served only v1beta1 and will not match.
+    version: "2.9.0"
+
 # ── Karpenter — REQUIRED for the Kata substrate ───────────────────────────────
 # Not optional if you want Kata: nested-virt nodes are provisioned by Karpenter
 # NodePools, and without the controller the kata/nodepools Application cannot

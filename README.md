@@ -172,6 +172,7 @@ Full comparison, benchmark timings, and the VMM capability matrix:
 | [SUBSTRATES.md](docs/SUBSTRATES.md) | Kata vs Lambda MicroVM; VMM capability matrix; benchmarks |
 | [DIAGRAMS.md](docs/DIAGRAMS.md) | Sequence and flow diagrams for every lifecycle |
 | [PREREQUISITES.md](docs/PREREQUISITES.md) | Accounts, quotas, region, GitHub setup, **cost estimate** |
+| [MANUAL-STEPS.md](docs/MANUAL-STEPS.md) | The few things not automated, and why each one cannot be |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every gotcha we hit, and the fix |
 | [ROADMAP.md](docs/ROADMAP.md) | What's next, known limitations |
 

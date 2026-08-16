@@ -148,13 +148,31 @@ resource "aws_iam_role_policy" "ack_capability" {
           "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
           "iam:UpdateAssumeRolePolicy",
         ]
-        Resource = "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-*"
+        # THREE distinct name shapes, and missing any one of them stalls the whole
+        # substrate. `*-microvm-*` alone looks like it covers everything and does
+        # not: the controller role is "<cluster>-ack-lambdamicrovms-controller",
+        # where the substring is "amicrovms-", so the wildcard never matches. The
+        # symptom is remote from the cause — the ACK Role sits ACK.Recoverable with
+        # AccessDenied on iam:GetRole, and the Application reports only
+        # "waiting for healthy state of iam.services.k8s.aws/Role/...".
+        Resource = [
+          # The lambdamicrovms controller's own role (templates/iam).
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-ack-lambdamicrovms-controller",
+          # Roles the KRO MicrovmSandbox graph creates: <name>-microvm-build / -exec.
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-build",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-exec",
+        ]
       },
       {
-        Sid      = "PassMicroVMRoles"
-        Effect   = "Allow"
-        Action   = "iam:PassRole"
-        Resource = "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-*"
+        Sid    = "PassMicroVMRoles"
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        # Only the two roles Lambda MicroVM actually assumes (build + exec). The
+        # controller role is never passed, so it is deliberately absent here.
+        Resource = [
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-build",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-exec",
+        ]
       },
     ]
   })

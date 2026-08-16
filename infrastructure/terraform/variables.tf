@@ -163,3 +163,34 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ── External Secrets (GitHub PAT distribution) ────────────────────────────────
+variable "enable_external_secrets" {
+  description = "Create the Secrets Manager container, Pod Identity, and ClusterSecretStore that distribute the GitHub PAT into the cluster. The examples ship ExternalSecret objects, so leaving this off means creating those Secrets by hand."
+  type        = bool
+  default     = true
+}
+
+variable "github_secret_name" {
+  description = "Secrets Manager secret id holding the GitHub PAT + webhook HMAC. Must match github.externalSecret.secretsManagerKey in the example values. Terraform creates the container but NEVER the value."
+  type        = string
+  default     = "dark-factory/github"
+}
+
+variable "external_secrets_namespace" {
+  description = "Namespace the External Secrets controller runs in. Must match externalSecrets.namespace in the platform values."
+  type        = string
+  default     = "external-secrets"
+}
+
+variable "external_secrets_service_account" {
+  description = "ServiceAccount of the External Secrets controller. Must match externalSecrets.serviceAccount in the platform values — Pod Identity is keyed on (namespace, serviceAccount)."
+  type        = string
+  default     = "external-secrets"
+}
+
+variable "external_secrets_store_name" {
+  description = "ClusterSecretStore name the ExternalSecrets reference. Must match github.externalSecret.clusterSecretStore in the example values."
+  type        = string
+  default     = "aws-secrets-manager"
+}
