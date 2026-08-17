@@ -163,6 +163,11 @@ tasks:
         export KARPENTER_NODE_ROLE="$(out karpenter_node_role)"
         export GITOPS_REPO_URL="$(out gitops_repo_url)"
         export GITOPS_REVISION="$(out gitops_target_revision)"
+        # The Lambda substrate builds IAM role ARNs from this. Empty means
+        # "arn:aws:iam:::role/..." and every PodIdentityAssociation fails with
+        # "Cross-account pass role is not allowed" -- which sounds like a trust
+        # policy problem, not a missing account number.
+        export ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
         # The Kata warm pool boots this image. Which repo depends on the arch the
         # substrate needs: Kata pods are amd64, Lambda MicroVM is ARM64-only.
@@ -176,6 +181,7 @@ tasks:
         echo "  nodeRole: $KARPENTER_NODE_ROLE"
         echo "  repo:     $GITOPS_REPO_URL @ $GITOPS_REVISION"
         echo "  image:    ${CODER_IMAGE:-<none>}:$CODER_IMAGE_TAG"
+        echo "  account:  $ACCOUNT_ID"
 
         if [ -z "$CODER_IMAGE" ]; then
           echo "  WARNING: no coder ECR repo in terraform outputs — warm-pool members"
@@ -183,7 +189,7 @@ tasks:
           echo "           the image (see examples/dark-factory-kata/README.md)."
         fi
 
-        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG'
+        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG $ACCOUNT_ID'
         for f in ../../{{.DIR}}/*.yaml; do
           envsubst "$VARS" < "$f" | kubectl apply -f -
         done

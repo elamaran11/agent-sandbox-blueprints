@@ -26,10 +26,14 @@ spec:
       valuesObject:
         microvm:
           enabled: true
-          # Substituted by `task lambda` from terraform cluster_name. The Pod
-          # Identity association is cluster-scoped, so a wrong name here means the
-          # ACK controller silently comes up with no credentials.
+          # Every IAM ARN this chart builds is prefixed with this. Left empty it
+          # yields "arn:aws:iam:::role/..." and every PodIdentityAssociation fails
+          # with "Cross-account pass role is not allowed" — which reads as a trust
+          # policy problem rather than a missing account number.
+          accountId: "${ACCOUNT_ID}"
           podIdentity:
+            # From terraform cluster_name. Pod Identity is cluster-scoped, so a wrong
+            # name here means the controller silently comes up with no credentials.
             clusterName: ${DESTINATION_CLUSTER}
   destination:
     name: ${DESTINATION_CLUSTER}
