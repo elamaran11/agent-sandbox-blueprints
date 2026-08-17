@@ -22,17 +22,40 @@
 # plaintext. Terraform creates the empty container and the read permission; you put
 # the value in out-of-band (see examples/_shared/SECRETS.md).
 
+# CREATE vs ADOPT. The secret may already exist — it is deliberately shareable, so
+# several clusters can read one credential, and that is the normal case in an account
+# that has run this (or the platform it came from) before. Terraform must NOT own a
+# secret it did not create: `terraform destroy` on THIS cluster would then delete a
+# credential other clusters depend on.
+#
+# So creation is opt-out. With create_github_secret = false the secret is looked up
+# and only READ permission is granted; teardown of this cluster leaves it untouched.
 resource "aws_secretsmanager_secret" "github" {
-  count = var.enable_external_secrets ? 1 : 0
+  count = var.enable_external_secrets && var.create_github_secret ? 1 : 0
 
   name        = var.github_secret_name
   description = "GitHub PAT + webhook HMAC for the Dark Factory. Value set out-of-band, never by Terraform."
 
-  # A demo cluster gets torn down repeatedly, and a 7-day deletion window means the
-  # name is still reserved on the next `task up` ("already scheduled for deletion").
+  # A demo cluster gets torn down repeatedly, and the default 30-day deletion window
+  # keeps the name reserved, so the next `task up` fails with
+  # "already scheduled for deletion".
   recovery_window_in_days = 0
 
   tags = local.tags
+}
+
+data "aws_secretsmanager_secret" "github" {
+  count = var.enable_external_secrets && !var.create_github_secret ? 1 : 0
+
+  name = var.github_secret_name
+}
+
+locals {
+  github_secret_arn = var.enable_external_secrets ? (
+    var.create_github_secret
+    ? aws_secretsmanager_secret.github[0].arn
+    : data.aws_secretsmanager_secret.github[0].arn
+  ) : ""
 }
 
 # Pod Identity for the External Secrets controller: no IRSA annotation, no static
@@ -69,7 +92,8 @@ resource "aws_iam_role_policy" "external_secrets" {
         "secretsmanager:DescribeSecret",
       ]
       # Read-only, and only this secret — not all of Secrets Manager.
-      Resource = "${aws_secretsmanager_secret.github[0].arn}*"
+      # Trailing * covers the 6-char suffix Secrets Manager appends to every ARN.
+      Resource = "${local.github_secret_arn}*"
     }]
   })
 }

@@ -194,3 +194,9 @@ variable "external_secrets_store_name" {
   type        = string
   default     = "aws-secrets-manager"
 }
+
+variable "create_github_secret" {
+  description = "Create the Secrets Manager secret container. Set false to ADOPT an existing secret (read-only) — required when other clusters share the same credential, so `terraform destroy` here cannot delete it."
+  type        = bool
+  default     = true
+}
