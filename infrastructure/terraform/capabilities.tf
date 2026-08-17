@@ -147,12 +147,20 @@ resource "aws_iam_role_policy" "ack_capability" {
           "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
           "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
           "iam:UpdateAssumeRolePolicy",
+          # UpdateRole: ACK writes back description / maxSessionDuration after create.
+          "iam:UpdateRole",
           # Tag actions are NOT optional even if you set no tags. ACK reads tags back
           # after create to decide whether observed state matches desired, so without
           # ListRoleTags the Role never leaves ACK.ResourceSynced=Unknown — it creates
           # the role in AWS successfully and then fails on the readback.
           "iam:TagRole", "iam:UntagRole", "iam:ListRoleTags",
         ]
+        # This is the COMPLETE set the ACK iam controller exercises for a Role, not a
+        # minimal guess. ACK surfaces missing permissions ONE AT A TIME — each fix
+        # reveals the next call in its reconcile loop (GetRole → ListRoleTags →
+        # UpdateRole → ...), and every intermediate state looks identical from the
+        # outside: ACK.ResourceSynced=Unknown and an Application stuck "waiting for
+        # healthy state". Granting the full set avoids N more rounds of that.
         # THREE distinct name shapes, and missing any one of them stalls the whole
         # substrate. `*-microvm-*` alone looks like it covers everything and does
         # not: the controller role is "<cluster>-ack-lambdamicrovms-controller",
