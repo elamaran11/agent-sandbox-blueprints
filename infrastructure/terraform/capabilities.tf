@@ -142,11 +142,16 @@ resource "aws_iam_role_policy" "ack_capability" {
         Sid    = "MicroVMRoles"
         Effect = "Allow"
         Action = [
-          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:TagRole",
+          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole",
           "iam:AttachRolePolicy", "iam:DetachRolePolicy",
           "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:GetRolePolicy",
           "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
           "iam:UpdateAssumeRolePolicy",
+          # Tag actions are NOT optional even if you set no tags. ACK reads tags back
+          # after create to decide whether observed state matches desired, so without
+          # ListRoleTags the Role never leaves ACK.ResourceSynced=Unknown — it creates
+          # the role in AWS successfully and then fails on the readback.
+          "iam:TagRole", "iam:UntagRole", "iam:ListRoleTags",
         ]
         # THREE distinct name shapes, and missing any one of them stalls the whole
         # substrate. `*-microvm-*` alone looks like it covers everything and does
@@ -167,11 +172,37 @@ resource "aws_iam_role_policy" "ack_capability" {
         Sid    = "PassMicroVMRoles"
         Effect = "Allow"
         Action = "iam:PassRole"
-        # Only the two roles Lambda MicroVM actually assumes (build + exec). The
-        # controller role is never passed, so it is deliberately absent here.
+        # Lambda MicroVM assumes build + exec. The controller role is ALSO passed —
+        # not by Lambda, but by the eks controller when it creates the three
+        # PodIdentityAssociations below, which hand that role to a ServiceAccount.
         Resource = [
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-build",
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-exec",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-ack-lambdamicrovms-controller",
+        ]
+      },
+      {
+        Sid    = "PodIdentityAssociations"
+        Effect = "Allow"
+        # The lambda-microvm substrate binds three ServiceAccounts (the ACK
+        # controller, the bridge, the lifecycle controller) to their AWS role via
+        # ACK-managed eks.services.k8s.aws PodIdentityAssociations. The policy
+        # previously had NO eks: actions at all, so all three sat at
+        # ACK.ResourceSynced=Unknown and never appeared in
+        # `aws eks list-pod-identity-associations` — while the Application reported
+        # only "waiting for healthy state of ... and 3 more resources".
+        Action = [
+          "eks:CreatePodIdentityAssociation",
+          "eks:DescribePodIdentityAssociation",
+          "eks:ListPodIdentityAssociations",
+          "eks:UpdatePodIdentityAssociation",
+          "eks:DeletePodIdentityAssociation",
+          "eks:TagResource", "eks:UntagResource", "eks:ListTagsForResource",
+        ]
+        # Scoped to THIS cluster and the associations under it, not every cluster.
+        Resource = [
+          module.eks.cluster_arn,
+          "arn:${data.aws_partition.current.partition}:eks:${var.region}:${local.account_id}:podidentityassociation/${local.cluster_name}/*",
         ]
       },
     ]
