@@ -98,6 +98,18 @@ resource "aws_iam_role_policy" "external_secrets" {
   })
 }
 
+# ORDERING GOTCHA: Pod Identity credentials are injected at pod ADMISSION. A pod that
+# was already running when this association is created never receives them — it keeps
+# using the node role and fails with
+#
+#   AccessDeniedException: User: .../system-eks-node-group-.../i-0e... is not
+#   authorized to perform: secretsmanager:GetSecretValue
+#
+# which names the NODE role, so it reads like a missing node policy rather than a
+# stale pod. On a fresh `task up` the ordering is correct (this exists before ESO
+# installs). If you add this to a live cluster, restart the controller:
+#
+#   kubectl rollout restart deploy/external-secrets -n external-secrets
 resource "aws_eks_pod_identity_association" "external_secrets" {
   count = var.enable_external_secrets ? 1 : 0
 

@@ -61,3 +61,22 @@ kubectl get nodes -l kata-enabled=true      # should scale to zero when idle
 
 If `task down` fails partway, re-run it — it deletes sandboxes and `Microvm` CRs before
 destroying the cluster so substrate controllers can terminate remote VMs first.
+
+## ExternalSecret stuck: "could not get secret data from provider"
+
+Check the controller log. If the AccessDenied names the **node** role
+(`.../system-eks-node-group-.../i-0e...`) rather than `<cluster>-external-secrets`,
+the IAM policy is fine — the pod is simply older than its Pod Identity association.
+Pod Identity credentials are injected at pod admission, so a pod that was already
+running never gets them and silently falls back to the node role.
+
+```bash
+kubectl rollout restart deploy/external-secrets -n external-secrets
+# then confirm the creds are present:
+kubectl get pod -n external-secrets -l app.kubernetes.io/name=external-secrets \
+  -o jsonpath='{.items[0].spec.containers[0].env[*].name}' | tr ' ' '\n' | grep AWS_CONTAINER
+```
+
+Expect `AWS_CONTAINER_CREDENTIALS_FULL_URI` and
+`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`. If they are absent, the pod predates the
+association. This applies to ANY Pod Identity consumer, not just ESO.
