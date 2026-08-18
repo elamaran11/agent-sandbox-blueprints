@@ -66,38 +66,76 @@ kubectl get secret dark-factory-github -n agent-sandbox-system -o jsonpath='{.da
 
 ---
 
-## 2. Register the GitHub webhook
+## 2. Expose and register the GitHub webhook
 
-**Why this cannot be automated:** the webhook has to point at an address that does not
+**Why this cannot be automated:** the webhook must point at an address that does not
 exist until the cluster does, and pointing GitHub at your cluster is a deliberate act
 on a repo you own.
 
-`task demo-*` exposes the EventSource as a `LoadBalancer` (an NLB — this blueprint
-installs no ingress controller). Get the address:
+### 2a. Give the EventSource a public address
+
+`task demo-*` creates a `dark-factory-webhook` Service of type `LoadBalancer`
+(`examples/_shared/templates/44-eventsource-service.yaml`).
+
+> Two things that are NOT true, both verified on a live cluster:
+> * Setting `spec.service.type: LoadBalancer` on the **EventSource** does nothing —
+>   the Argo Events controller reads only `spec.service.ports` and always creates a
+>   ClusterIP. Hence the separate Service.
+> * A plain `LoadBalancer` Service does **not** get an NLB for free. On EKS 1.36 the
+>   in-tree cloud LoadBalancer support is gone, so without the **AWS Load Balancer
+>   Controller** the Service sits at `EnsuringLoadBalancer` with no address forever.
+
+So pick one:
+
+**Option A — install the AWS Load Balancer Controller** (what OAP does). Then:
 
 ```bash
-kubectl get svc -n argo-events -l 'eventsource-name=dark-factory-github' \
-  -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}'
+kubectl get svc dark-factory-webhook -n argo-events \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 ```
 
-Then in the target repo → **Settings → Webhooks → Add webhook**:
+**Option B — no load balancer.** Set `trigger.argoEvents.serviceType=ClusterIP` (the
+Service is then not rendered) and expose the EventSource yourself — an SSH/ngrok-style
+tunnel to `dark-factory-github-eventsource-svc:12000`, or run the pipeline without
+GitHub events by submitting the workflow directly:
+
+```bash
+kubectl create -n argo -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata: { generateName: df-run- }
+spec:
+  workflowTemplateRef: { name: df-run }
+  arguments:
+    parameters:
+      - { name: issue-number, value: "1" }
+      - { name: issue-id,     value: "1" }
+      - { name: repo,         value: "your-org/your-repo" }
+      - { name: issue-title,  value: "Add a health endpoint" }
+      - { name: base-branch,  value: "main" }
+EOF
+```
+
+That exercises the whole pipeline (claim → coder → PR) without a public endpoint, and
+is the fastest way to see a run end to end.
+
+### 2b. Register it on the repo
+
+In the target repo → **Settings → Webhooks → Add webhook**:
 
 | Field | Value |
 |---|---|
-| Payload URL | `http://<nlb-hostname>:12000/dark-factory` |
+| Payload URL | `http://<address>:12000/dark-factory` |
 | Content type | `application/json` |
 | Secret | the `webhook-secret` from step 1 |
 | Events | Issues, Pull requests, Pull request reviews, Issue comments |
 
-Argo Events can self-register this (`active: true` in the EventSource) if the PAT has
+Argo Events can self-register this (`active: true` on the EventSource) if the PAT has
 `admin:repo_hook`. A fine-grained token scoped to one repo usually does not, hence the
 manual path.
 
-> Plain HTTP on the NLB is fine for a demo but sends the HMAC-signed payload
-> unencrypted. For anything real, terminate TLS — an ACM cert on the NLB, or add an
-> ingress controller and use the ALB pattern OAP uses.
-
----
+> Plain HTTP sends the HMAC-signed payload unencrypted. Fine for a demo on a throwaway
+> repo; terminate TLS for anything real.
 
 ## 3. Build and push the agent images
 

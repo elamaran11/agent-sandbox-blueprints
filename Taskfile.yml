@@ -252,8 +252,18 @@ tasks:
           echo "         Is the platform synced? Check: task status"
         fi
 
+        # Values must be set at BOTH scopes. The pipeline templates are split across
+        # the parent chart and the examples/_shared SUBCHART, and a parent-level
+        # --set never reaches a subchart — it falls back to _shared/values.yaml.
+        # That is how the workflow PodIdentityAssociation rendered as
+        # "-dark-factory-workflow" (empty cluster name) and was rejected by the API
+        # for an invalid RFC 1123 name.
+        SUB=dark-factory-shared
         SET=""
-        add() { [ -n "$2" ] && SET="$SET --set-string $1=$2" || true; }
+        add() {
+          [ -n "$2" ] || return 0
+          SET="$SET --set-string $1=$2 --set-string $SUB.$1=$2"
+        }
         add bifrost.url            "${BIFROST_IP:+http://$BIFROST_IP:8080}"
         add holdout.bifrostUrl     "${BIFROST_IP:+http://$BIFROST_IP:8080}"
         add reviewImage            "${CODER_REPO:+$CODER_REPO:$TAG}"

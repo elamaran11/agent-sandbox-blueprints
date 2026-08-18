@@ -1,0 +1,49 @@
+{{- if and .Values.trigger.argoEvents.enabled (eq (.Values.trigger.argoEvents.serviceType | default "LoadBalancer") "LoadBalancer") }}
+{{- /*
+Public endpoint for the GitHub webhook — a SEPARATE Service, deliberately.
+
+Setting `spec.service.type: LoadBalancer` on the EventSource does NOT work: the
+Argo Events controller reads spec.service.ports but ignores type, and always
+creates `<name>-eventsource-svc` as a ClusterIP. Verified on a live cluster — the
+EventSource CR showed type: LoadBalancer while the created Service was ClusterIP,
+so GitHub had nothing to POST to and no run could ever trigger.
+
+Owning our own Service avoids fighting that controller (it would revert a patch to
+the Service it manages) and keeps the reachability decision in this chart.
+
+It selects the eventsource pod by the labels the controller applies —
+`eventsource-name` is the stable one; pod-template-hash is not.
+
+REQUIRES THE AWS LOAD BALANCER CONTROLLER. Verified the hard way: on EKS 1.36 there
+is no in-tree cloud LoadBalancer support left, so this Service sits forever at
+"EnsuringLoadBalancer" with no address unless the AWS LBC is installed. I originally
+assumed a plain LoadBalancer Service would get an NLB for free — it does not. See
+docs/MANUAL-STEPS.md for the two ways to expose the webhook.
+
+It is plain HTTP: the payload is HMAC-signed (webhookSecret)
+so GitHub can be authenticated, but the body is not encrypted in transit. Fine for
+a demo on a throwaway repo; put TLS in front of it for anything real (ACM cert on
+the NLB, or an ALB via an ingress controller).
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: dark-factory-webhook
+  namespace: {{ .Values.trigger.argoEvents.namespace }}
+  labels:
+    {{- include "dark-factory.labels" . | nindent 4 }}
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: external
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+spec:
+  type: LoadBalancer
+  selector:
+    eventsource-name: dark-factory-github
+    owner-name: dark-factory-github
+  ports:
+    - name: webhook
+      port: {{ .Values.trigger.argoEvents.webhookPort | default 12000 }}
+      targetPort: {{ .Values.trigger.argoEvents.webhookPort | default 12000 }}
+      protocol: TCP
+{{- end }}
