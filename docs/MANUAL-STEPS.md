@@ -179,14 +179,97 @@ deliberate human decision.
 
 ---
 
-## 5. Connect the review agents (optional)
+## 5. Set up the review agents (optional, but this is the interesting part)
 
-The AWS Security Agent and DevOps Agent are a limited preview and need a one-time
-console step (Agent Space ↔ repo connection) that cannot be scripted or done from the
-credential-less sandbox. Both default to `enabled: false`; the pipeline runs without
-them. See `docs/PREREQUISITES.md`.
+Two independent reviewers run **outside** the sandbox — the coder never grades its own
+work. Both are **off by default** (`enabled: false`) because they are a limited preview
+and not available in every account. The pipeline runs fine without them: the gate steps
+become no-ops and report success.
 
----
+> If a run shows `devops-gate Succeeded` but no `aws-devops-agent/...` check on the PR,
+> the agent was disabled — not broken. That is the no-op path.
+
+| | Gates via | Verdict appears as |
+|---|---|---|
+| **DevOps Agent** (release readiness, runs first) | its GitHub App check-run | check `aws-devops-agent/release-readiness-review` |
+| **Security Agent** (narrow/strict, runs second) | AWS API polled by the pipeline | commit status `dark-factory/security` |
+
+### 5a. DevOps Agent
+
+1. Install the **AWS DevOps Agent GitHub App** on the target repo.
+2. In the console, create/choose an **Agent Space** and **connect the repo** to it.
+   This one-time connect cannot be scripted, and cannot be done from the
+   credential-less sandbox (no browser, no Midway).
+3. Enable it:
+
+```yaml
+devopsAgent:
+  enabled: true
+  gate: check        # wait for the App's check-run (default, native)
+  waitSeconds: 900
+```
+
+`gate: label` is the fallback if you drive the review some other way — the pipeline
+then waits for a coder-applied label instead of a check-run.
+
+### 5b. Security Agent
+
+This one needs AWS resources the blueprint does **not** create for you:
+
+| Needed | Value | Notes |
+|---|---|---|
+| IRSA role | `securityAgent.irsaRoleArn` | the review step assumes it |
+| Service role | `securityAgent.serviceRoleArn` | the agent service assumes it |
+| S3 diff bucket | `securityAgent.diffBucket` | the PR diff is staged here for review |
+| Identity Center instance | `securityAgent.idcInstanceArn` | `arn:aws:sso:::instance/ssoins-...` |
+| Agent Space + Application IDs | Secret named by `securityAgent.secretName` | see below |
+
+**Known gap:** OAP ships a PreSync Job that finds-or-creates the Agent Space and writes
+its IDs into that Secret. This blueprint does **not** port it, so the Secret must
+already exist — create the space in the console and record its IDs:
+
+```bash
+kubectl create secret generic dark-factory-securityagent -n argo \
+  --from-literal=spaceId=<agent-space-id> \
+  --from-literal=appId=<application-id>
+```
+
+Then enable it:
+
+```yaml
+securityAgent:
+  enabled: true
+  region: us-west-2
+  spaceName: dark-factory
+  irsaRoleArn: arn:aws:iam::<acct>:role/<your-irsa-role>
+  serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<your-service-role>
+  diffBucket: <your-diff-bucket>
+  idcInstanceArn: arn:aws:sso:::instance/ssoins-...
+  blockLevel: medium      # findings at/above this severity fail the merge gate
+```
+
+Put these in the **gitignored** `examples/dark-factory-*/values.yaml`, never in a
+committed file — they are account-specific and `task lint:leaks` will reject them.
+
+### 5c. Verify a run actually used them
+
+```bash
+# the PR's combined status should list BOTH agent results
+gh pr checks <pr-number> --repo <org>/<repo>
+```
+
+A run with both agents live looks like this (verified on a real PR):
+
+```
+dark-factory/implementation                success  implemented, built + tests green
+dark-factory/holdout                       success  holdout 8/8 (100%) — gate passed
+dark-factory/security                      success  security: no findings
+aws-devops-agent/release-readiness-review  success  Release readiness review: change approved
+```
+
+Ordering is deliberate (AI-DLC): DevOps first for broad release readiness, then the
+Security Agent for the narrow strict pass. A single consolidated verdict is written back
+so mixed signals cannot leave a PR ambiguous.
 
 ## Not manual — common misconceptions
 
