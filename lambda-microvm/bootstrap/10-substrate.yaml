@@ -31,6 +31,19 @@ spec:
           # with "Cross-account pass role is not allowed" — which reads as a trust
           # policy problem rather than a missing account number.
           accountId: "${ACCOUNT_ID}"
+          image:
+            # DEPLOYMENT-SCOPED, and it matters. This one value names the S3
+            # artifact bucket, the build role, the exec role AND the MicrovmImage.
+            # A MicrovmImage is account-scoped and this pre-GA ACK controller does
+            # NOT honour adoption annotations — it always calls CreateMicrovmImage,
+            # so any name already present in the account fails permanently with
+            #   ConflictException: The request conflicts with the current state of
+            #   the resource
+            # (verified: the controller logged CreateMicrovmImage 409 even with
+            # adoption-policy set). Uniqueness is the only workable strategy, so
+            # key it to the cluster: two clusters in one account, or a re-run
+            # beside an older deployment, cannot collide.
+            name: ${DESTINATION_CLUSTER}
           podIdentity:
             # From terraform cluster_name. Pod Identity is cluster-scoped, so a wrong
             # name here means the controller silently comes up with no credentials.

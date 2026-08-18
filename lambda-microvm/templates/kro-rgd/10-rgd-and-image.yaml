@@ -143,21 +143,6 @@ spec:
         kind: MicrovmImage
         metadata:
           name: ${schema.spec.name}-image
-          annotations:
-            # ADOPT-OR-CREATE, not create. A MicrovmImage is account-scoped and slow
-            # to build, so an image from an earlier run — or another cluster in the
-            # same account — will already own the name. Plain create then fails with
-            #   ConflictException: The request conflicts with the current state of
-            #   the resource
-            # and the graph sits IN_PROGRESS on readyWhen for node "image" forever,
-            # with nothing in the chain naming the collision.
-            #
-            # adopt-or-create takes over the existing image when present and builds
-            # one when absent, so a re-run or a second cluster converges instead of
-            # colliding. readyWhen above already accepts UPDATED (not only CREATED),
-            # which is exactly what an adopted, previously-built image reports.
-            services.k8s.aws/adoption-policy: adopt-or-create
-            services.k8s.aws/adoption-fields: '{"name":"${schema.spec.name}-image"}'
         spec:
           name: ${schema.spec.name}-image
           baseImageARN: ${schema.spec.baseImageARN}
