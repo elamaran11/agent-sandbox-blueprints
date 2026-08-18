@@ -1,9 +1,9 @@
 # Agent Sandbox Blueprints — Implementation Plan
 
-> **Status:** Phases 0–6 BUILT and pushed. All decisions in §9 are resolved.
-> Everything renders/validates locally; **nothing has been deployed to AWS yet** —
-> `task up` is the next step and needs your account. See §12 for exactly what is
-> verified vs unverified.
+> **Status:** DEPLOYED and VERIFIED on AWS (940019131157, us-west-2). All 14 ArgoCD
+> Applications Synced/Healthy. Kata proven as a real micro-VM; Lambda MicroVM proven
+> through the full instance lifecycle including warm suspend/resume of the same VM.
+> See §12 for exactly what has run vs what remains (a full `task demo-*` issue→PR).
 
 ## 1. Goal
 
@@ -277,19 +277,31 @@ Two optional confirmations that don't block Phase 0: public repo owner/name, and
 
 Repo carries **no `.terraform/`** (836 MB stayed ignored) and no secrets.
 
-### NOT yet verified — needs a real AWS account
+### VERIFIED live on AWS (the target account/region)
 
-Everything above is static validation. None of it has run against AWS:
+Deployed and exercised end to end, not just rendered:
 
-1. `task up` — cluster create, and whether the ARGOCD/ACK/KRO capabilities enable
-   cleanly via CLI in your account/region.
-2. `task kata` — whether Karpenter provisions a nested-virt node and a pod actually
-   boots under `kata-clh` / `kata-qemu` / `kata-fc`.
-3. `task lambda` — whether the KRO graph reconciles, the MicrovmImage builds from the
-   S3 artifact, and a `Microvm` reaches `RUNNING`.
-4. `task demo-*` — a real issue → PR → gates → merge, on both substrates.
-5. Agent images are **not built or pushed** — both examples reference placeholder ECR
-   URLs you must replace.
+1. `task up` — cluster created; ARGOCD/ACK/KRO capabilities ACTIVE; **all 14 ArgoCD
+   Applications Synced/Healthy** (platform-addons, agent-sandbox, argo-workflows,
+   argo-events, bifrost, external-secrets, karpenter, kata-deploy, kata-deploy-fc,
+   kata-nodepools, kata-runtimeclasses, kata-sandbox-templates, ack-lambdamicrovms,
+   lambda-microvm-substrate).
+2. `task kata` — Karpenter provisioned a `c8i.2xlarge` nested-virt node; a coder
+   booted under `kata-clh` as a genuine micro-VM (**guest kernel 6.18.35 ≠ host
+   6.18.39-79.141.amzn2023**), toolchain present, GitHub reachable
+   (`dark-factory-sandbox` → HTTP 200 from inside the VM using the ESO-managed PAT).
+3. `task lambda` — KRO graph reconciled, MicrovmImage built (`CREATED`, arm64) from
+   the S3 artifact, `MicrovmSandbox` ACTIVE. A SandboxClaim drove the full instance
+   lifecycle: **Microvm RUNNING** (`/run` → HTTP 200, coder executing) →
+   **SUSPENDED** → **RUNNING** (same microvmID — warm resume, not recreate) →
+   claim delete → **TERMINATED**. The suspend/resume-the-same-VM behaviour is the
+   MicroVM highlight and it works through `Sandbox.spec.operatingMode`.
+4. Agent images **built and pushed**: `dark-factory-coder` (amd64) and
+   `dark-factory-coder-microvm` (arm64), `v0.1.0`+`latest`, arch/digest verified.
+
+Not yet run: `task demo-*` as a full GitHub issue → PR → merge (the pipeline
+templates deploy and the substrate is proven; an end-to-end issue run is the
+remaining exercise, and needs the webhook registered per docs/MANUAL-STEPS.md §2).
 
 ### Closed since the first draft
 

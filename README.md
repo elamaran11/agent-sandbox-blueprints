@@ -137,7 +137,9 @@ cp examples/dark-factory-kata/values.example.yaml examples/dark-factory-kata/val
 task demo-kata      # or: task demo-lambda
 ```
 
-Then label a GitHub issue and watch the PR appear. Full walkthroughs:
+Then register the GitHub webhook ([MANUAL-STEPS.md §2](docs/MANUAL-STEPS.md) — one
+manual step, because the address does not exist until the cluster does), label an
+issue, and watch the PR appear. Full walkthroughs:
 [Kata](examples/dark-factory-kata/README.md) · [Lambda MicroVM](examples/dark-factory-lambda/README.md)
 
 ### Tear down
