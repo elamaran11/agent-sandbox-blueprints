@@ -133,10 +133,20 @@ resource "aws_iam_role_policy" "ack_capability" {
         Action = [
           "s3:CreateBucket", "s3:DeleteBucket", "s3:GetBucket*", "s3:PutBucket*",
           "s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
-          "s3:ListAllMyBuckets",
         ]
         Resource = ["arn:${data.aws_partition.current.partition}:s3:::*-microvm-artifacts",
         "arn:${data.aws_partition.current.partition}:s3:::*-microvm-artifacts/*"]
+      },
+      {
+        # s3:ListAllMyBuckets is an ACCOUNT-level action — it takes Resource "*" and
+        # nothing narrower. ACK calls it while reconciling a Bucket, so folding it into
+        # the bucket-scoped statement above silently denies it (the ARN never matches),
+        # and the Bucket sits ACK.Recoverable=AccessDenied with the S3 bucket never
+        # actually created. List/read only; no mutation is granted account-wide.
+        Sid      = "ListBuckets"
+        Effect   = "Allow"
+        Action   = ["s3:ListAllMyBuckets"]
+        Resource = "*"
       },
       {
         Sid    = "MicroVMRoles"
