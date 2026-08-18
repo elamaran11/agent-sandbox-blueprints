@@ -91,7 +91,7 @@ microvm:
   # revision pointer, not a secret, and the MicrovmImage only rebuilds when this
   # value CHANGES — overwriting the same S3 key is a silent no-op. So bumping it
   # here (r1 -> r2) is the deliberate act that triggers a rebuild.
-  codeArtifactUri: "s3://coder-microvm-artifacts/coder-r1.zip"
+  codeArtifactUri: "s3://agent-sandbox-eks-microvm-artifacts/agent-sandbox-eks-r1.zip"
   image:
     # Render the single committed MicrovmSandbox instance that triggers the build.
     enabled: true
