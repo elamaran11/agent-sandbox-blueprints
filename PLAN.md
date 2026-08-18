@@ -1,6 +1,6 @@
 # Agent Sandbox Blueprints — Implementation Plan
 
-> **Status:** DEPLOYED and VERIFIED on AWS (940019131157, us-west-2). All 14 ArgoCD
+> **Status:** DEPLOYED and VERIFIED on AWS (target account/region). All 14 ArgoCD
 > Applications Synced/Healthy. Kata proven as a real micro-VM; Lambda MicroVM proven
 > through the full instance lifecycle including warm suspend/resume of the same VM.
 > See §12 for exactly what has run vs what remains (a full `task demo-*` issue→PR).
