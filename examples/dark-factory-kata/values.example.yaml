@@ -1,82 +1,50 @@
-# Dark Factory on Kata — copy to values.yaml (gitignored) and edit.
-#
-#   cp values.example.yaml values.yaml
-#
-# WHAT BELONGS HERE:  the repo the agent works in, which label triggers it,
-#                     which model it uses, which review gates are on.
-# WHAT DOES *NOT*:    the GitHub token itself. Only the NAME of the Kubernetes
-#                     Secret holding it. See secrets.md.
+# Copy to values.yaml (gitignored) and edit. These are the chart's REAL keys —
+# an earlier version of this file used github.repo / agent.image, which NO template
+# reads, so editing it changed nothing and the run silently used the defaults.
 
-# ── The repository the agent works in ─────────────────────────────────────────
-# Point this at a THROWAWAY repo first. The agent opens PRs here, and a merge is
-# a real merge.
-github:
-  # owner/name of the target repo
-  repo: your-org/your-sandbox-repo
+trigger:
+  argoEvents:
+    # Repos whose issues fire the factory.
+    repositories:
+      - owner: your-org
+        names:
+          - your-sandbox-repo
+    # Public URL GitHub posts webhooks to. Leave "" and submit Workflows directly
+    # if you have no load balancer — see docs/MANUAL-STEPS.md §2.
+    webhookUrl: ""
+    # LoadBalancer needs the AWS Load Balancer Controller on EKS 1.36+.
+    serviceType: LoadBalancer
 
-  # Branch PRs target.
-  baseBranch: main
+# Which agentic CLI runs in the sandbox. Both are baked into the coder image.
+coder:
+  engine: claude          # claude | kiro
 
-  # Name of the Kubernetes Secret holding the GitHub credentials — NOT the token.
-  # Create it with kubectl or External Secrets (see secrets.md). Keys expected:
-  #   token          a PAT (or GitHub App installation token) scoped to the repo
-  #   webhookSecret  the HMAC secret you configured on the GitHub webhook
-  secretName: dark-factory-github
+# ── Review agents ────────────────────────────────────────────────────────────
+# OFF by default: limited preview, and the Security Agent needs IAM you create.
+# Full setup steps: docs/MANUAL-STEPS.md §5.
+securityAgent:
+  enabled: false
+  # Required when enabled — all account-specific, so keep them in values.yaml only:
+  # irsaRoleArn: arn:aws:iam::<acct>:role/<irsa-role>
+  # serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<service-role>
+  # diffBucket: <diff-bucket>
+  # idcInstanceArn: arn:aws:sso:::instance/ssoins-...
+  blockLevel: medium      # findings at/above this severity block the merge gate
 
-  # Label that starts a run. Add this label to an issue and the pipeline fires.
-  # Keep it distinct from the Lambda example's label so both can coexist on one
-  # cluster and route to the right substrate.
-  triggerLabel: dark-factory
+devopsAgent:
+  enabled: false
+  gate: check             # wait for the DevOps Agent App's check-run
 
-# ── The agent ─────────────────────────────────────────────────────────────────
-agent:
-  # Container image built from ../_shared/agent (x86_64 for the Kata pod).
-  # Use the ECR URL terraform printed: terraform output coder_ecr_urls
-  image: <account>.dkr.ecr.us-west-2.amazonaws.com/dark-factory-coder:v1
+# ── Gates ────────────────────────────────────────────────────────────────────
+holdout:
+  enabled: true
+  threshold: 0.90         # fraction of hidden scenarios that must pass
 
-  # claude | kiro — which headless coding agent runs inside the sandbox.
-  engine: claude
+deployTest:
+  # OFF: this blueprint ships no deploy-test image and terraform creates no repo
+  # for one. Build your own, set .image, then enable.
+  enabled: false
 
-  # Bedrock model id the agent reasons with.
-  model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
-
-  # Which Kata hypervisor the sandbox runs on.
-  #   kata-clh   default — fast boot, supports the workspace volume
-  #   kata-qemu  use if you need GPU passthrough
-  #   kata-fc    will NOT work here: Firecracker cannot mount volumes and this
-  #              agent needs a workspace. See ../../kata/README.md.
-  runtimeClass: kata-clh
-
-  # How many concurrent sandboxes to keep warm. A claim takes one instantly and
-  # the pool refills. This is also the effective concurrency limit for runs.
-  warmPoolSize: 2
-
-# ── Review gates ──────────────────────────────────────────────────────────────
-# Every gate is advisory to a HUMAN — nothing merges without an approval event.
-gates:
-  # Hidden test scenarios the agent can neither see nor edit, scored by a
-  # different model. This is the gate that works for everyone with no external
-  # dependencies, so it is on by default.
-  holdout:
-    enabled: true
-
-  # Applies the change in an ephemeral namespace (k8s manifests) or runs
-  # terraform validate (HCL). The only pipeline step with cluster write access.
-  deployTest:
-    enabled: true
-
-  # The AWS Security and DevOps review agents are EXTERNAL GitHub Apps tied to
-  # specific accounts. If you do not have them installed, leave these false —
-  # the pipeline still runs end to end on the gates above.
-  # See README.md → "Wiring the AWS review agents" if you do.
-  securityAgent:
-    enabled: false
-  devopsAgent:
-    enabled: false
-
-# ── Iteration ─────────────────────────────────────────────────────────────────
 iterate:
-  # Comment "fix findings" on the PR and the agent revises. Capped so a
-  # disagreement between the agent and a reviewer cannot loop forever.
   enabled: true
   maxIterations: 3
