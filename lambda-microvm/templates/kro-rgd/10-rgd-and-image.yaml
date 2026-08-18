@@ -211,7 +211,13 @@ metadata:
 spec:
   name: {{ .Values.microvm.image.name | default "coder" }}
   region: {{ .Values.microvm.region | quote }}
-  baseImageARN: {{ .Values.microvm.baseImageARN | quote }}
+  # AWS-published base the VM image builds FROM. Required and non-empty — an empty
+  # value fails at the API with a regex ValidationException on baseImageArn, which
+  # surfaces as MicrovmImage state=None and a MicrovmSandbox stuck IN_PROGRESS on
+  # readyWhen for node "image". Derived from the region so a fork in another region
+  # works without editing values; override microvm.baseImageARN to pin a different
+  # base.
+  baseImageARN: {{ .Values.microvm.baseImageARN | default (printf "arn:aws:lambda:%s:aws:microvm-image:al2023-1" .Values.microvm.region) | quote }}
   codeArtifactUri: {{ .Values.microvm.codeArtifactUri | quote }}
 {{- end }}
 {{- end }}
