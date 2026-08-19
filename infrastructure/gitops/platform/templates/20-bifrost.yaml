@@ -58,6 +58,34 @@ spec:
           # because a Kata guest's resolver cannot resolve cluster service names.
           type: ClusterIP
           port: {{ .Values.bifrost.port | default 8080 }}
+        # NESTED bifrost.bifrost — the upstream chart's own config block.
+        #
+        # WITHOUT THIS THE KATA CODER CANNOT CALL A MODEL. Bifrost starts happily with
+        # zero providers (GET /api/providers returns {"providers":[],"total":0}), so it
+        # looks healthy while every inference call fails with
+        #   API Error: 500 failed to get config for provider: not found
+        # and the coder aborts. The Lambda substrate is unaffected because Flow D is
+        # Bedrock-direct and never routes through Bifrost — which is exactly why the
+        # Lambda PR went green while the Kata one could not progress.
+        #
+        # No API keys: the Bedrock provider authenticates with the ServiceAccount's
+        # Bedrock Pod Identity (terraform/iam.tf), so only the region is needed.
+        #
+        # The alias is the contract with the coder. It asks for model "claude-sonnet";
+        # that name must map to a real inference profile here or the lookup fails.
+        bifrost:
+          client:
+            enforceAuthOnInference: false
+          providers:
+            bedrock:
+              keys:
+                - name: bedrock-default
+                  models: ["*"]
+                  weight: 1
+                  aliases:
+                    {{ .Values.bifrost.coderModelAlias | default "claude-sonnet" }}: {{ .Values.bifrost.coderModel | quote }}
+                  bedrock_key_config:
+                    region: {{ .Values.bifrost.region | default .Values.region | default "us-west-2" }}
   # Bifrost is a StatefulSet, and spec.volumeClaimTemplates is IMMUTABLE. The API
   # server defaults fields inside it that are not in the chart's output — an
   # embedded apiVersion/kind, volumeMode: Filesystem, and a status block — so the

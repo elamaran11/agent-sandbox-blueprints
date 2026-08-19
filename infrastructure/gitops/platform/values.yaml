@@ -104,6 +104,11 @@ bifrost:
   # The upstream chart has NO default image tag and fails to render without one.
   # Must be a real tag from hub.docker.com/r/maximhq/bifrost/tags.
   imageTag: "v1.5.0"
+  region: us-west-2
+  # The coder asks Bifrost for this alias; it must resolve to a real model.
+  # Matches what the OAP hub uses, so the Kata path behaves identically.
+  coderModelAlias: claude-sonnet
+  coderModel: us.anthropic.claude-sonnet-4-5-20250929-v1:0
   chart:
     repoURL: https://maximhq.github.io/bifrost/helm-charts
     name: bifrost
