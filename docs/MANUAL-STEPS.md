@@ -179,54 +179,93 @@ deliberate human decision.
 
 ---
 
-## 5. Set up the review agents (optional, but this is the interesting part)
+## 5. Set up the review agents (step by step)
 
 Two independent reviewers run **outside** the sandbox — the coder never grades its own
-work. Both are **off by default** (`enabled: false`) because they are a limited preview
-and not available in every account. The pipeline runs fine without them: the gate steps
-become no-ops and report success.
+work. Both are **off by default** (`enabled: false`) because they need account-level
+onboarding you must do once. The pipeline runs fine without them: the gate steps become
+no-ops and report success.
 
 > If a run shows `devops-gate Succeeded` but no `aws-devops-agent/...` check on the PR,
-> the agent was disabled — not broken. That is the no-op path.
+> the agent was **disabled**, not broken. That is the no-op path — the single most
+> confusing thing about this pipeline.
 
-| | Gates via | Verdict appears as |
-|---|---|---|
-| **DevOps Agent** (release readiness, runs first) | its GitHub App check-run | check `aws-devops-agent/release-readiness-review` |
-| **Security Agent** (narrow/strict, runs second) | AWS API polled by the pipeline | commit status `dark-factory/security` |
+| | Reviews | Gates via | Verdict appears as |
+|---|---|---|---|
+| **DevOps Agent** (first) | broad release readiness | its GitHub App check-run | check `aws-devops-agent/release-readiness-review` |
+| **Security Agent** (second) | narrow, strict | AWS API polled by the pipeline | commit status `dark-factory/security` |
 
-### 5a. DevOps Agent
+Ordering is deliberate (the AI-DLC model): broad readiness first, then the strict
+security pass. A single consolidated verdict is written back so mixed signals cannot
+leave a PR ambiguous.
 
-1. Install the **AWS DevOps Agent GitHub App** on the target repo.
-2. In the console, create/choose an **Agent Space** and **connect the repo** to it.
-   This one-time connect cannot be scripted, and cannot be done from the
-   credential-less sandbox (no browser, no Midway).
-3. Enable it:
+---
+
+### 5a. Create the Agent Space (shared by both agents)
+
+An **Agent Space** is the logical container defining an agent's access scope. Both
+agents live in one.
+
+1. **Create the space role** — the IAM role the DevOps Agent service principal assumes
+   inside the space:
+   [Create the DevOps Agent space role](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-cli-onboarding-guide.html)
+2. **Create the Agent Space** — name it, set the primary AWS account and operator
+   access:
+   [Creating an Agent Space](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html)
+   Use the same name you put in `securityAgent.spaceName` (default `dark-factory`).
+3. Verify it in the console per the "Verifying your Agent Space setup" section of that
+   page before continuing — a half-created space fails later in ways that look like
+   permissions problems.
+
+### 5b. Register GitHub, then connect the repo
+
+Two distinct steps, and the second is the one people miss:
+
+1. **Account-level registration** — register your GitHub user / org / Enterprise Server
+   instance once for the account.
+2. **Connect the specific repo to the Agent Space**, and enable
+   **Code Review and Automated Testing** so pull requests trigger release-readiness
+   reviews:
+   [Connecting repositories to an Agent Space](https://docs.aws.amazon.com/devopsagent/latest/userguide/connecting-to-cicd-pipelines-connecting-github.html)
+
+Account registration alone does **nothing** for a given repo — without the per-repo
+connection no check-run is ever posted, and `devops-gate` waits out its
+`waitSeconds` and fails with no explanation on the PR.
+
+> This connection cannot be scripted, and cannot be done from the sandbox: the coder VM
+> is credential-less with no browser and no Midway. That is why it is in this document
+> and not in Terraform.
+
+### 5c. Enable the DevOps Agent
 
 ```yaml
 devopsAgent:
   enabled: true
-  gate: check        # wait for the App's check-run (default, native)
+  gate: check            # wait for the App's check-run (default, native)
+  checkRunName: "aws-devops-agent/release-readiness-review"
   waitSeconds: 900
+  clearVerdicts: ["Safe to Release", "Proceed with Caution"]
 ```
 
-`gate: label` is the fallback if you drive the review some other way — the pipeline
-then waits for a coder-applied label instead of a check-run.
+`clearVerdicts` is what counts as a pass — any other verdict blocks the merge gate.
+`gate: label` is the fallback if you drive the review another way; the pipeline then
+waits for a coder-applied label instead of a check-run.
 
-### 5b. Security Agent
+### 5d. Enable the Security Agent
 
 This one needs AWS resources the blueprint does **not** create for you:
 
-| Needed | Value | Notes |
-|---|---|---|
-| IRSA role | `securityAgent.irsaRoleArn` | the review step assumes it |
-| Service role | `securityAgent.serviceRoleArn` | the agent service assumes it |
-| S3 diff bucket | `securityAgent.diffBucket` | the PR diff is staged here for review |
-| Identity Center instance | `securityAgent.idcInstanceArn` | `arn:aws:sso:::instance/ssoins-...` |
-| Agent Space + Application IDs | Secret named by `securityAgent.secretName` | see below |
+| Value | What it is |
+|---|---|
+| `securityAgent.irsaRoleArn` | role the in-cluster review step assumes |
+| `securityAgent.serviceRoleArn` | role the agent service assumes (usually under `/service-role/`) |
+| `securityAgent.diffBucket` | S3 bucket the PR diff is staged into for review |
+| `securityAgent.idcInstanceArn` | `arn:aws:sso:::instance/ssoins-...` |
+| `securityAgent.secretName` | Secret holding the space + application IDs |
 
 **Known gap:** OAP ships a PreSync Job that finds-or-creates the Agent Space and writes
-its IDs into that Secret. This blueprint does **not** port it, so the Secret must
-already exist — create the space in the console and record its IDs:
+its IDs into that Secret. This blueprint does **not** port it, so create the Secret
+yourself after 5a:
 
 ```bash
 kubectl create secret generic dark-factory-securityagent -n argo \
@@ -234,42 +273,58 @@ kubectl create secret generic dark-factory-securityagent -n argo \
   --from-literal=appId=<application-id>
 ```
 
-Then enable it:
+Then:
 
 ```yaml
 securityAgent:
   enabled: true
   region: us-west-2
-  spaceName: dark-factory
-  irsaRoleArn: arn:aws:iam::<acct>:role/<your-irsa-role>
-  serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<your-service-role>
-  diffBucket: <your-diff-bucket>
+  spaceName: dark-factory          # must match the space from 5a
+  irsaRoleArn: arn:aws:iam::<acct>:role/<irsa-role>
+  serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<service-role>
+  diffBucket: <diff-bucket>
   idcInstanceArn: arn:aws:sso:::instance/ssoins-...
-  blockLevel: medium      # findings at/above this severity fail the merge gate
+  blockLevel: medium               # findings at/above this severity block the gate
+  pollTimeoutSeconds: 900
 ```
 
-Put these in the **gitignored** `examples/dark-factory-*/values.yaml`, never in a
-committed file — they are account-specific and `task lint:leaks` will reject them.
+Put all of it in the **gitignored** `examples/dark-factory-*/values.yaml` — never a
+committed file. These are account-specific and `task lint:leaks` will reject them.
 
-### 5c. Verify a run actually used them
+### 5e. Verify a run really used both agents
 
 ```bash
-# the PR's combined status should list BOTH agent results
 gh pr checks <pr-number> --repo <org>/<repo>
 ```
 
-A run with both agents live looks like this (verified on a real PR):
+A run with both agents live looks like this (from a real PR on this blueprint):
 
 ```
-dark-factory/implementation                success  implemented, built + tests green
-dark-factory/holdout                       success  holdout 8/8 (100%) — gate passed
-dark-factory/security                      success  security: no findings
-aws-devops-agent/release-readiness-review  success  Release readiness review: change approved
+aws-devops-agent/release-readiness-review  pass   Release readiness review: change approved
+dark-factory/security                      pass   security: no findings
+dark-factory/deploy-test                   pass   terraform validate passed
+dark-factory/holdout                       pass   not applicable — no hidden scenarios match
+dark-factory/implementation                pass   implemented, built + tests green
 ```
 
-Ordering is deliberate (AI-DLC): DevOps first for broad release readiness, then the
-Security Agent for the narrow strict pass. A single consolidated verdict is written back
-so mixed signals cannot leave a PR ambiguous.
+And a genuine block looks like this — the DevOps Agent caught a real regression where
+the coder deleted an existing bucket policy:
+
+```
+aws-devops-agent/release-readiness-review  fail   Release readiness review: change blocked
+```
+
+with a `critical` inline finding on the PR. That is the system working: two reviewers
+disagreeing is the point, and the Security Agent passed the same change.
+
+### 5f. When a verdict blocks
+
+Comment the finding on the PR and `df-iterate` re-runs the coder with it as a revision
+note. `iterate.maxIterations` (default 3) caps the loop so it cannot spin.
+
+> Requires `iterate.identityGuard: false` (the default) when the factory shares a PAT
+> with the repo owner — otherwise your own comment is read as the factory
+> self-triggering and the round is silently skipped.
 
 ## Not manual — common misconceptions
 
