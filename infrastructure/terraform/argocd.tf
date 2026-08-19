@@ -53,6 +53,12 @@ locals {
       revision = var.gitops_target_revision
     }
     destinationCluster = module.eks.cluster_name
+    # The AWS Load Balancer Controller cannot auto-discover its VPC, and the chart
+    # has no default. Passed here so a fork needs no committed edit.
+    awsLbc = {
+      vpcId  = module.vpc.vpc_id
+      region = var.region
+    }
   }))
 }
 

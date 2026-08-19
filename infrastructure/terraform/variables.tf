@@ -200,3 +200,16 @@ variable "create_github_secret" {
   type        = bool
   default     = true
 }
+
+# ── AWS Load Balancer Controller ──────────────────────────────────────────────
+variable "enable_aws_lbc" {
+  description = "Create the AWS Load Balancer Controller's IAM role, Pod Identity, and ELB subnet tags. Required for the GitHub webhook to have a public address — without it the Dark Factory can only be triggered by submitting a Workflow by hand."
+  type        = bool
+  default     = true
+}
+
+variable "aws_lbc_service_account" {
+  description = "ServiceAccount the AWS Load Balancer Controller runs as. Must match the platform chart's awsLbc.serviceAccount — Pod Identity is keyed on (namespace, serviceAccount)."
+  type        = string
+  default     = "aws-load-balancer-controller"
+}

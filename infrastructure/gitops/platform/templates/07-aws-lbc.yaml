@@ -1,0 +1,70 @@
+{{- if .Values.awsLbc.enabled }}
+{{- /*
+AWS Load Balancer Controller — what makes the Dark Factory event-driven.
+
+On EKS 1.36 there is no in-tree cloud LoadBalancer support, so without this a
+`type: LoadBalancer` Service never gets an address: it sits at
+`EnsuringLoadBalancer` indefinitely and the Service events never mention a missing
+controller. That is what blocks the GitHub webhook, which in turn is the difference
+between "label an issue and walk away" and a human submitting Workflows by hand.
+
+The examples' dark-factory-webhook Service resolves to an NLB as soon as this is
+running — no change needed there.
+
+CREDENTIALS: Pod Identity, via the role in terraform/lbc.tf. The chart's
+serviceAccount name and namespace MUST match the association or the controller comes
+up and then fails to describe subnets, which reads as a VPC permissions problem.
+
+SUBNET DISCOVERY: the controller finds subnets by tag (kubernetes.io/role/elb and
+internal-elb), applied in terraform/lbc.tf. Untagged subnets produce
+"couldn't auto-discover subnets" and nothing is provisioned.
+*/ -}}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aws-load-balancer-controller
+  namespace: argocd
+  annotations:
+    # Wave 1 — before the examples create their LoadBalancer Service.
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.awsLbc.chart.repoURL | quote }}
+    chart: {{ .Values.awsLbc.chart.name | quote }}
+    targetRevision: {{ .Values.awsLbc.chart.version | quote }}
+    helm:
+      releaseName: aws-load-balancer-controller
+      valuesObject:
+        clusterName: {{ .Values.destinationCluster | quote }}
+        region: {{ .Values.awsLbc.region | default "us-west-2" | quote }}
+        vpcId: {{ .Values.awsLbc.vpcId | quote }}
+        serviceAccount:
+          create: true
+          # No IRSA annotation — Pod Identity supplies credentials.
+          name: {{ .Values.awsLbc.serviceAccount | quote }}
+        # One replica is plenty for a blueprint; the chart defaults to 2 and its
+        # anti-affinity can leave the second Pending on a small node group.
+        replicaCount: {{ .Values.awsLbc.replicas | default 1 }}
+  destination:
+    name: {{ .Values.destinationCluster | quote }}
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      # prune: false — pruning the controller's CRDs (TargetGroupBinding,
+      # IngressClassParams) would orphan every load balancer it manages and leak
+      # real AWS resources.
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
+{{- end }}

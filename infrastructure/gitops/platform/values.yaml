@@ -87,6 +87,23 @@ karpenter:
   # Label on the managed node group. Karpenter must not run on nodes it manages.
   nodeRole: system
 
+# ── AWS Load Balancer Controller — REQUIRED for the webhook ───────────────────
+# On EKS 1.36 there is no in-tree LoadBalancer support, so without this the
+# EventSource Service never gets an address and the Dark Factory can only be
+# triggered by submitting a Workflow by hand. IAM + subnet tags: terraform/lbc.tf.
+awsLbc:
+  enabled: true
+  serviceAccount: aws-load-balancer-controller
+  replicas: 1
+  region: us-west-2
+  # Injected by Terraform (vpc_id output) — the controller cannot auto-discover it.
+  vpcId: ""
+  chart:
+    repoURL: https://aws.github.io/eks-charts
+    name: aws-load-balancer-controller
+    # Keep in step with policies/aws-load-balancer-controller.json in terraform.
+    version: "1.13.0"
+
 # ── Bifrost — in-cluster LLM gateway (optional) ───────────────────────────────
 # The Kata agent calls models through this so requests can be traced centrally.
 # The Lambda MicroVM agent bypasses it (it runs outside the cluster network and
