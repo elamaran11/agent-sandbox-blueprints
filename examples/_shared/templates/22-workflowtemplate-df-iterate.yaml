@@ -70,6 +70,11 @@ spec:
             value: "{{`{{workflow.parameters.comment-author}}`}}"
           - name: MAX_ITERATIONS
             value: {{ .Values.iterate.maxIterations | quote }}
+          # Only meaningful when the factory has its OWN GitHub identity. With a PAT
+          # shared with the repo owner, true makes every human fix comment look like
+          # the factory self-triggering, and the round is silently skipped.
+          - name: IDENTITY_GUARD
+            value: {{ .Values.iterate.identityGuard | default false | quote }}
           - name: ARGO_NAMESPACE
             value: {{ .Values.argo.namespace }}
           - name: BIFROST_URL

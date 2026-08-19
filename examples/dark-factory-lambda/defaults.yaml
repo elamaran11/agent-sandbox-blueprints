@@ -264,6 +264,10 @@ reviewImage: ""  # injected by `task demo` from the coder ECR repo
 # past the cap, a human breaks the tie.
 iterate:
   enabled: true
+  # Skip comments authored by the factory's own identity. Leave FALSE when the
+  # factory shares a PAT with the repo owner (the usual case) — otherwise your own
+  # fix comments read as self-triggers and every round is silently skipped.
+  identityGuard: false
   maxIterations: 3
 
 # ── Flow D — Lambda MicroVM substrate (df-run-lambda ONLY) ───────────────────

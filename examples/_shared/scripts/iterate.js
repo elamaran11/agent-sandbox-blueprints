@@ -79,13 +79,26 @@ async function main() {
   // IDENTITY-based guard: the factory posts comments (verdict review, auto-fix notices,
   // relayed findings) as the token owner. If the comment author IS that identity, it's
   // the factory talking to itself → skip. Catches any factory comment even if unmarkered.
-  try {
-    const me = await gh("GET", "/user");
-    if (COMMENT_AUTHOR && me.login && COMMENT_AUTHOR === me.login) {
-      console.log(`[df-iterate] comment author (${COMMENT_AUTHOR}) is the factory identity — skipping (no self-trigger)`);
-      return;
-    }
-  } catch { /* if /user fails, fall back to the marker + bot guards above */ }
+  // DEFAULT OFF, and that matters. The factory authenticates with the SAME PAT the repo
+  // owner uses, so the "factory identity" IS that person's login. With this guard on, a
+  // genuine review comment from the repo owner is indistinguishable from the factory
+  // talking to itself, so every fix round is silently skipped: df-iterate reports
+  // Succeeded, no commit is pushed, and the PR never converges. Observed exactly that —
+  // two rounds "succeeded" with the PR head SHA unchanged.
+  //
+  // The marker + bot guards above are what actually prevent self-triggering: every
+  // factory comment carries a "<!-- dark-factory:... -->" marker, and agent findings come
+  // from *[bot] logins. This check only adds value when the factory has its OWN identity
+  // (a GitHub App or a separate machine user) — set iterate.identityGuard=true then.
+  if (String(process.env.IDENTITY_GUARD || "false").toLowerCase() === "true") {
+    try {
+      const me = await gh("GET", "/user");
+      if (COMMENT_AUTHOR && me.login && COMMENT_AUTHOR === me.login) {
+        console.log(`[df-iterate] comment author (${COMMENT_AUTHOR}) is the factory identity — skipping (identityGuard=true)`);
+        return;
+      }
+    } catch { /* if /user fails, fall back to the marker + bot guards above */ }
+  }
   const pr = await gh("GET", `/repos/${REPO}/pulls/${PR}`);
   if (pr.state !== "open") { console.log(`[df-iterate] PR #${PR} is ${pr.state} — skipping`); return; }
   const ref = pr.head.ref;                       // df/issue-<n>
