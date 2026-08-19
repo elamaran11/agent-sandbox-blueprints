@@ -141,7 +141,15 @@ spec:
           # is even created. iterate.js keeps the marker + bot + identity guards as
           # defense-in-depth (this expr is the primary stop).
         exprs:
-          - expr: 'body_comment_body matches "(?s).*" && !(body_comment_body contains "dark-factory:")'
+          # NO `matches` clause. `body_comment_body matches "(?s).*"` was both
+          # POINTLESS (it matches every string) and INVALID in this expr-lang
+          # version, which rejected the whole expression with
+          #   expr filter error (Cannot transition token types from
+          #   VARIABLE [body_comment_body] to VARIABLE [matches])
+          # A filter that fails to parse DISCARDS the event, so every PR comment was
+          # dropped and submit-df-iterate never fired — the webhook arrived and was
+          # thrown away. Confirmed in the sensor log on a real issue_comment delivery.
+          - expr: '!(body_comment_body contains "dark-factory:")'
             fields:
               - name: body_comment_body
                 path: body.comment.body
