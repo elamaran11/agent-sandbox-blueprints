@@ -177,7 +177,6 @@ Full comparison, benchmark timings, and the VMM capability matrix:
 | [MANUAL-STEPS.md](docs/MANUAL-STEPS.md) | The few things not automated, and why each one cannot be |
 | [ROADMAP.md](docs/ROADMAP.md) | What's next, and the **known gaps** you will hit |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every gotcha we hit, and the fix |
-| [ROADMAP.md](docs/ROADMAP.md) | What's next, known limitations |
 
 ---
 
