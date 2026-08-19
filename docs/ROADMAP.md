@@ -65,3 +65,70 @@ Kept out on purpose, because they obscure the pattern:
 - Multi-cluster / hub-spoke fleet management
 - A large addon catalog (service mesh, portals, alternative gateways)
 - Production hardening: HA NAT, private-only endpoints, org SCPs, audit pipelines
+
+---
+
+## Known gaps (as of the first verified end-to-end runs)
+
+Everything below is **known and deliberate to defer**, not undiscovered. Both
+substrates have produced reviewed, mergeable PRs with both AWS review agents gating.
+These are the edges you will hit next.
+
+### 1. No public webhook — runs are submitted directly
+
+**Impact:** the "label a GitHub issue and walk away" experience is not live. Every run
+in this repo was started by submitting a `Workflow` directly (see
+[MANUAL-STEPS §2](MANUAL-STEPS.md), Option B).
+
+**Why:** the EventSource needs a public address. Two things do not work as they appear:
+`spec.service.type: LoadBalancer` on an EventSource is ignored by the Argo Events
+controller (it always creates a ClusterIP), and a plain `LoadBalancer` Service does not
+get an NLB on EKS 1.36 — in-tree cloud LoadBalancer support is gone, so it sits at
+`EnsuringLoadBalancer` forever.
+
+**Fix:** install the **AWS Load Balancer Controller** as a platform addon. The
+`dark-factory-webhook` Service is already in the chart and will resolve once it exists.
+
+### 2. Security Agent space IDs must be seeded by hand
+
+OAP ships a PreSync Job that finds-or-creates the Agent Space and writes its IDs into a
+Secret. This blueprint does not port it, so `securityAgent.secretName` must exist before
+enabling the agent. Documented with the `kubectl` in [MANUAL-STEPS §5d](MANUAL-STEPS.md).
+
+**Fix:** port that Job, or replace it with a Terraform-managed lookup.
+
+### 3. `deploy-test` runs despite `enabled: false`
+
+It is defaulted off in all three values trees (the blueprint ships no deploy-test image
+and Terraform creates no ECR repo for one), yet it executed on a run and posted
+`dark-factory/deploy-test`. Harmless when it passes; misleading when it fails. **Root
+cause not established** — do not assume the flag works.
+
+### 4. Lambda workflow reports Failed after a successful PR
+
+`df-run-lambda` finished `Failed` with `provision-microvm` exiting 1, *after* the PR was
+already built, reviewed and green. So **workflow phase ≠ PR outcome**, in both
+directions (a Kata run reported `Succeeded` while its PR was blocked by an agent). Judge
+a run by its PR checks, not its Argo phase. The failing tail is likely the
+suspend/teardown step.
+
+### 5. MicrovmImage names are scoped per cluster to avoid collisions
+
+A `MicrovmImage` is account-scoped and the pre-GA `lambdamicrovms` ACK controller
+**ignores adoption annotations** — it always calls `CreateMicrovmImage`, so an existing
+name fails permanently with `ConflictException`. Worked around by keying the image,
+bucket and roles to the cluster name. Revisit when the controller supports adoption, or
+goes GA under Managed ACK.
+
+### 6. The three example values trees are byte-identical duplicates
+
+`examples/_shared/values.yaml` plus a `defaults.yaml` per example, because a subchart's
+values are invisible to parent templates. `task lint:deps` and CI guard the drift, but
+the real fix is moving each example's WorkflowTemplate into the shared subchart behind a
+`substrate` value so there is one tree. The same split is why `task demo` must `--set`
+every value at **both** scopes.
+
+### 7. Values carry unused upstream keys
+
+The trees were extracted wholesale from OAP and still contain keys this blueprint never
+reads. They are harmless but make the surface look larger than it is.
