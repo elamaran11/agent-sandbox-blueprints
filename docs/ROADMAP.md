@@ -132,3 +132,36 @@ every value at **both** scopes.
 
 The trees were extracted wholesale from OAP and still contain keys this blueprint never
 reads. They are harmless but make the surface look larger than it is.
+
+### 8. Comment → `df-iterate` auto-trigger is unverified
+
+Labelling an issue triggers a run end to end (proven on both substrates). Commenting on
+a PR to request a fix does **not** — the sensor receives the webhook (GitHub reports
+`200 OK`) and then discards it:
+
+```
+expr filter error (Cannot transition token types from
+VARIABLE [body_comment_body] to VARIABLE [matches])
+```
+
+A filter that errors drops the event, so `submit-df-iterate` never fires.
+
+**Do not fix this here in isolation.** The expression is byte-identical to OAP's
+reference implementation, so a local change would fork a bug fix away from the
+reference. Ruled out already: stale logs (a fresh pod reproduces it), stale JetStream
+consumers (the Sensor was recreated), a drifted vendored subchart (source and `.tgz`
+match), and the webhook not arriving. Removing the `matches` clause also did **not**
+fix it.
+
+**Likeliest cause:** the argo-events version. This blueprint pins `2.4.15`; expr-lang's
+handling of `matches` changed across releases, so compare with the version OAP's hub
+runs. Note that pre-fix deliveries replay from JetStream and log the same error, which
+makes stale and live failures indistinguishable — separate them by event ID:
+
+```bash
+kubectl logs -n argo-events -l sensor-name=dark-factory --tail=200 \
+  | grep -o 'Event \[ID .[a-f0-9]*.' | sort | uniq -c
+```
+
+**Workaround (proven):** submit `df-iterate` directly with the finding as
+`comment-body`. That is how PR #149 went from DevOps-Agent-blocked to approved.
