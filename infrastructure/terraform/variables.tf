@@ -172,9 +172,9 @@ variable "enable_external_secrets" {
 }
 
 variable "github_secret_name" {
-  description = "Secrets Manager secret id holding the GitHub PAT + webhook HMAC. Must match github.externalSecret.secretsManagerKey in the example values. Terraform creates the container but NEVER the value."
+  description = "Secrets Manager secret id holding the GitHub PAT + webhook HMAC. Must match github.externalSecret.secretsManagerKey in the example values. Terraform creates the container but NEVER the value. Namespaced under the project so it cannot be shared with — or destroyed by — another stack in the same account."
   type        = string
-  default     = "dark-factory/github"
+  default     = "agent-sandbox/github"
 }
 
 variable "external_secrets_namespace" {

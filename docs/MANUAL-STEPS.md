@@ -326,6 +326,68 @@ note. `iterate.maxIterations` (default 3) caps the loop so it cannot spin.
 > with the repo owner — otherwise your own comment is read as the factory
 > self-triggering and the round is silently skipped.
 
+---
+
+## 6. Decoupling from another stack (before you tear one down)
+
+This blueprint is self-contained, but **account-level** resources can be shared with a
+larger platform in the same account (e.g. an OAP hub/spoke). If that stack is destroyed,
+anything it *owns* goes with it — and a shared credential disappearing looks like a
+broken agent, not a teardown side effect.
+
+### The one that breaks everything: the GitHub secret
+
+Namespaced under the project (`agent-sandbox/github`) so no other stack owns it. If you
+inherited a shared one, duplicate it into your own before tearing the other stack down:
+
+```bash
+# copy the value into a blueprint-owned secret (value never printed)
+V=$(aws secretsmanager get-secret-value --secret-id <shared-secret-id> \
+      --region us-west-2 --query SecretString --output text)
+aws secretsmanager create-secret --name agent-sandbox/github --region us-west-2 \
+  --description "GitHub PAT + webhook HMAC for agent-sandbox-blueprints" \
+  --secret-string "$V"; unset V
+
+# point Terraform + the examples at it (already the defaults)
+#   terraform: var.github_secret_name       = "agent-sandbox/github"
+#   examples:  github.externalSecret.secretsManagerKey = agent-sandbox/github
+terraform apply -var-file=terraform.tfvars     # repoints ESO's read policy
+task demo-kata && task demo-lambda             # re-render the ExternalSecrets
+
+# verify: all three Ready, all reading the NEW id
+kubectl get externalsecret -A \
+  -o custom-columns='NS:.metadata.namespace,READY:.status.conditions[0].status,KEY:.spec.data[0].remoteRef.key'
+```
+
+`create_github_secret = false` keeps Terraform from *owning* a secret it did not create,
+so `task down` here can never delete it. Set it `true` only if you want this stack to own
+the lifecycle.
+
+### The other three, and how exposed you are
+
+| Shared thing | Blueprint use | If the other stack deletes it |
+|---|---|---|
+| Security Agent IRSA role, service role, diff bucket | `dark-factory/security` gate | Gate breaks. Recreate them, or set `securityAgent.enabled: false` — the pipeline still runs |
+| Agent Space + repo connection | Both agent reviews | Redo [§5a–5b](#5a-create-the-agent-space-shared-by-both-agents). Account-level, not owned by any one cluster |
+| A `MicrovmImage` sharing a name | Lambda substrate | **Not exposed** — image/bucket/roles are keyed to the cluster name (see ROADMAP gap 5) |
+| ECR repos | Agent images | **Not exposed** — namespaced under `project_name` |
+
+### Before destroying the other stack
+
+```bash
+# 1. does IT own your secret? if this lists it, its destroy will delete it
+cd <other-stack>/terraform && terraform state list | grep -i secretsmanager
+
+# 2. confirm nothing here still points at the other stack
+grep -rn 'dark-factory/github' examples/ infrastructure/ | grep -v ROADMAP
+
+# 3. after teardown, re-verify this blueprint
+kubectl get externalsecret -A          # 3x Ready=True
+```
+
+Then run one labelled issue end to end. If the coder fails GitHub auth, the secret went
+with the teardown — restore it from the duplicate above.
+
 ## Not manual — common misconceptions
 
 | Looks manual | Actually |

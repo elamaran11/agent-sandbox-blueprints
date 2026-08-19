@@ -64,7 +64,10 @@ github:
   externalSecret:
     enabled: true
     clusterSecretStore: aws-secrets-manager
-    secretsManagerKey: dark-factory/github
+    # Namespaced under the project. Do NOT point this at another stack's secret:
+    # a shared secret means that stack's `terraform destroy` deletes YOUR
+    # credential and every run starts failing GitHub auth.
+    secretsManagerKey: agent-sandbox/github
     refreshInterval: 1h
 
 # Step-container image: needs kubectl + curl + jq to drive claims, poll the
