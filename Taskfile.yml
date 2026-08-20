@@ -270,6 +270,14 @@ tasks:
         add holdout.evalImage      "${CODER_REPO:+$CODER_REPO:$TAG}"
         add microvm.podIdentity.clusterName "$CLUSTER"
         add microvm.podIdentity.accountId   "$ACCOUNT"
+        # MUST match what `task lambda` gave the substrate. That value names the
+        # MicrovmSandbox, and df-run-lambda's provision step looks the sandbox up BY
+        # NAME to read imageARN/executionRoleARN. Leave them out of step and the step
+        # blocks forever on
+        #   [provision] reading platform image coder (waiting for build ready)...
+        # while the sandbox is actually called <cluster> — a silent hang, not an error,
+        # because it is polling for a resource that will never exist.
+        add microvm.image.name "$CLUSTER"
 
         echo "  cluster=$CLUSTER account=$ACCOUNT bifrost=${BIFROST_IP:-none} tag=$TAG"
 
