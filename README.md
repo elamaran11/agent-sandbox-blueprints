@@ -11,6 +11,7 @@ running inside a micro-VM it cannot escape.
 [![EKS](https://img.shields.io/badge/Amazon-EKS-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/eks/)
 [![Kata](https://img.shields.io/badge/Kata-micro--VM-1e88e5)](https://katacontainers.io/)
 [![Lambda MicroVM](https://img.shields.io/badge/AWS_Lambda-MicroVM-FF9900?logo=awslambda&logoColor=white)](https://aws.amazon.com/lambda/)
+[![AgentCore](https://img.shields.io/badge/Amazon_Bedrock-AgentCore-FF9900)](https://aws.amazon.com/bedrock/agentcore/)
 
 </div>
 
@@ -23,15 +24,16 @@ autonomous coding agent that takes a GitHub issue, implements it, tests it, gets
 merges it — with a human approving *evidence*, not diffs.
 
 The agent runs untrusted, LLM-generated code, so it never runs in a shared-kernel container. This
-blueprint gives you **two hardware-isolated substrates** for it, behind one identical developer
+blueprint gives you **three hardware-isolated substrates** for it, behind one identical developer
 experience:
 
 | Substrate | What it is | Best for |
 |---|---|---|
 | **Kata micro-VM** | Hardware-isolated pods on nested-virt EKS nodes — your own kernel per sandbox, three hypervisors (Cloud Hypervisor, QEMU, Firecracker) | Production-ready today; long-lived workspaces; GPU (via QEMU) |
 | **AWS Lambda MicroVM** | Serverless Firecracker VMs provisioned on demand, suspended while idle, terminated at merge | Bursty agent work; scale-to-zero economics; no node pool to operate |
+| **Amazon Bedrock AgentCore Runtime** | Managed microVM compute with disposable sessions; ACK/KRO create the runtime and V2 restores an idle snapshot per session | Separate coding rounds without a retained workspace; direct Bedrock inference ([verified scope](docs/SUBSTRATES.md)) |
 
-Pick one, or run both side by side. **The pipeline, review gates, and UX are identical** — the only
+Pick one, or run them side by side. **The pipeline, review gates, and UX are identical** — the only
 difference is a label on the GitHub issue.
 
 > **Why this repo exists.** These pieces exist inside a larger platform, buried under fleet
@@ -53,13 +55,14 @@ flowchart TB
 
     subgraph PIPE["examples/ — Dark Factory pipeline"]
         SENSOR["Argo Events<br/>sensor"]
-        WF["Argo Workflows<br/>df-run / df-run-lambda"]
+        WF["Argo Workflows<br/>df-run / df-run-lambda / df-run-agentcore"]
         GATES["holdout · deploy-test<br/>security · devops"]
     end
 
     subgraph SUB["Sandbox substrates"]
         KATA["kata/<br/>Kata micro-VM<br/>clh · qemu · fc"]
         LMVM["lambda-microvm/<br/>AWS Lambda MicroVM<br/>suspend / resume"]
+        ACR["agentcore/<br/>AgentCore Runtime<br/>disposable sessions"]
     end
 
     subgraph INFRA["infrastructure/ — cluster + platform"]
@@ -70,7 +73,8 @@ flowchart TB
     ISSUE --> SENSOR --> WF
     WF -->|claim sandbox| KATA
     WF -->|provision MicroVM| LMVM
-    KATA & LMVM -->|agent writes code| PR
+    WF -->|invoke session| ACR
+    KATA & LMVM & ACR -->|agent writes code| PR
     PR --> GATES --> PR
     INFRA --- SUB
     EKS --- ADDONS
@@ -91,9 +95,11 @@ fix is requested — you pay for the minutes the agent is actually thinking.
 infrastructure/     Terraform (VPC, EKS, Karpenter, Managed ArgoCD/ACK/KRO) + GitOps addons
 kata/               Kata substrate: 3 VMMs, nested-virt Karpenter pools, sandbox templates
 lambda-microvm/     Lambda MicroVM substrate: ACK controller, KRO graph, hook-server image, shim
+agentcore/          AgentCore Runtime substrate: ACK controller, KRO graph, arm64 host image
 examples/
   dark-factory-kata/    Run the pattern on Kata
   dark-factory-lambda/  Run the pattern on Lambda MicroVM
+  dark-factory-agentcore/  Run the pattern on AgentCore Runtime
 docs/               Architecture, substrate comparison, diagrams, prerequisites, troubleshooting
 ```
 
@@ -122,11 +128,12 @@ cp infrastructure/gitops/values.example.yaml infrastructure/gitops/values.yaml
 task up          # terraform apply → EKS + Karpenter + Managed ArgoCD/ACK/KRO, then bootstrap addons
 ```
 
-### 3 — Add a substrate (either or both)
+### 3 — Add a substrate (choose one or more)
 
 ```bash
 task kata        # nested-virt Karpenter pools + kata-deploy (clh/qemu/fc) + sandbox templates
 task lambda      # lambdamicrovms ACK controller + KRO graph + hook-server image + shim bridge
+task agentcore   # Managed ACK + KRO runtime, V2 flip; builds + pushes the arm64 host image on first run
 ```
 
 ### 4 — Run the Dark Factory
@@ -134,13 +141,13 @@ task lambda      # lambdamicrovms ACK controller + KRO graph + hook-server image
 ```bash
 cp examples/dark-factory-kata/values.example.yaml examples/dark-factory-kata/values.yaml
 # edit: target repo, PAT secret, trigger label, model
-task demo-kata      # or: task demo-lambda
+task demo-kata      # or: task demo-lambda / task demo-agentcore
 ```
 
 Then register the GitHub webhook ([MANUAL-STEPS.md §2](docs/MANUAL-STEPS.md) — one
 manual step, because the address does not exist until the cluster does), label an
 issue, and watch the PR appear. Full walkthroughs:
-[Kata](examples/dark-factory-kata/README.md) · [Lambda MicroVM](examples/dark-factory-lambda/README.md)
+[Kata](examples/dark-factory-kata/README.md) · [Lambda MicroVM](examples/dark-factory-lambda/README.md) · [AgentCore Runtime](examples/dark-factory-agentcore/README.md)
 
 ### Tear down
 
@@ -152,14 +159,14 @@ task down        # destroys everything, including the sandboxes and node pools
 
 ## Choosing a substrate
 
-| | Kata micro-VM | Lambda MicroVM |
-|---|---|---|
-| **Isolation** | Own kernel per sandbox (VT-x) | Own kernel per sandbox (Firecracker) |
-| **Provisioning** | Pre-warmed pool → instant claim | On-demand, ~90 s cold start |
-| **Scale to zero** | Node pool consolidates when idle | **VM suspends between rounds** |
-| **Persistent workspace** | ✅ Volume-backed | ❌ Read-only rootfs (`/tmp` only) |
-| **GPU** | ✅ via `kata-qemu` (VFIO) | ❌ |
-| **Maturity** | Production-ready | Preview / pre-GA |
+| | Kata micro-VM | Lambda MicroVM | AgentCore Runtime |
+|---|---|---|---|
+| **Isolation** | Own kernel per sandbox (VT-x) | Own kernel per sandbox (Firecracker) | Managed microVM compute per session |
+| **Provisioning** | Pre-warmed pool → instant claim | On-demand, ~90 s cold start | Runtime created once; V2 snapshot restores for each new session (not benchmarked here) |
+| **Scale to zero** | Node pool consolidates when idle | **VM suspends between rounds** | Coder session stops each round; runtime remains provisioned |
+| **Persistent workspace** | ✅ Volume-backed | ❌ Read-only rootfs (`/tmp` only) | ❌ Fresh `/tmp` workspace each round; GitHub holds state |
+| **GPU** | ✅ via `kata-qemu` (VFIO) | ❌ | ❌ In this microVM variant; ACRI is [blocked by the ACK SDK model](docs/ROADMAP.md) |
+| **Maturity** | Production-ready | Preview / pre-GA | GA service; live-verified here (PUBLIC + VPC, V2, first run, fix round, label trigger — see [SUBSTRATES.md](docs/SUBSTRATES.md)) |
 
 Full comparison, benchmark timings, and the VMM capability matrix:
 **[docs/SUBSTRATES.md](docs/SUBSTRATES.md)**
@@ -171,7 +178,7 @@ Full comparison, benchmark timings, and the VMM capability matrix:
 | Doc | What's in it |
 |---|---|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The three layers, CRDs, and how the pipeline drives a sandbox |
-| [SUBSTRATES.md](docs/SUBSTRATES.md) | Kata vs Lambda MicroVM; VMM capability matrix; benchmarks |
+| [SUBSTRATES.md](docs/SUBSTRATES.md) | Kata/Lambda measured runs and AgentCore design comparison |
 | [DIAGRAMS.md](docs/DIAGRAMS.md) | Sequence and flow diagrams for every lifecycle |
 | [PREREQUISITES.md](docs/PREREQUISITES.md) | Accounts, quotas, region, GitHub setup, **cost estimate** |
 | [MANUAL-STEPS.md](docs/MANUAL-STEPS.md) | The few things not automated, and why each one cannot be |

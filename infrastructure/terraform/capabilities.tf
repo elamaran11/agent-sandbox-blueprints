@@ -116,8 +116,9 @@ resource "aws_iam_role" "capability" {
 
 # ArgoCD and KRO need no AWS permissions — they only act inside the cluster.
 # ACK does: its controllers create real AWS resources. Scope this to what the
-# blueprint actually uses (the Lambda MicroVM graph creates IAM roles + an S3
-# artifact bucket) rather than granting broad access.
+# blueprint actually uses (the Lambda MicroVM and AgentCore graphs create IAM
+# roles; the Lambda graph also creates an S3 artifact bucket) rather than
+# granting broad access.
 resource "aws_iam_role_policy" "ack_capability" {
   count = var.enable_managed_ack ? 1 : 0
 
@@ -149,7 +150,7 @@ resource "aws_iam_role_policy" "ack_capability" {
         Resource = "*"
       },
       {
-        Sid    = "MicroVMRoles"
+        Sid    = "SubstrateRoles"
         Effect = "Allow"
         Action = [
           "iam:CreateRole", "iam:DeleteRole", "iam:GetRole",
@@ -171,33 +172,76 @@ resource "aws_iam_role_policy" "ack_capability" {
         # UpdateRole → ...), and every intermediate state looks identical from the
         # outside: ACK.ResourceSynced=Unknown and an Application stuck "waiting for
         # healthy state". Granting the full set avoids N more rounds of that.
-        # THREE distinct name shapes, and missing any one of them stalls the whole
-        # substrate. `*-microvm-*` alone looks like it covers everything and does
-        # not: the controller role is "<cluster>-ack-lambdamicrovms-controller",
-        # where the substring is "amicrovms-", so the wildcard never matches. The
-        # symptom is remote from the cause — the ACK Role sits ACK.Recoverable with
-        # AccessDenied on iam:GetRole, and the Application reports only
-        # "waiting for healthy state of iam.services.k8s.aws/Role/...".
+        # Lambda has controller, build, and exec roles; AgentCore has execution
+        # and invoker roles. `*-microvm-*` alone does not cover
+        # everything and does not: the Lambda controller role is
+        # "<cluster>-ack-lambdamicrovms-controller", where the substring is
+        # "amicrovms-", so the wildcard never matches. The symptom is remote from
+        # the cause — the ACK Role sits ACK.Recoverable with AccessDenied on
+        # iam:GetRole, and the Application reports only "waiting for healthy state
+        # of iam.services.k8s.aws/Role/...". AgentCore role names use separate patterns.
         Resource = [
           # The lambdamicrovms controller's own role (templates/iam).
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-ack-lambdamicrovms-controller",
           # Roles the KRO MicrovmSandbox graph creates: <name>-microvm-build / -exec.
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-build",
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-exec",
+          # AgentCore graph execution role and workflow invoker role.
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-agentcore-exec",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-dark-factory-agentcore-invoker",
         ]
       },
       {
-        Sid    = "PassMicroVMRoles"
+        Sid    = "PassSubstrateRoles"
         Effect = "Allow"
         Action = "iam:PassRole"
         # Lambda MicroVM assumes build + exec. The controller role is ALSO passed —
         # not by Lambda, but by the eks controller when it creates the three
         # PodIdentityAssociations below, which hand that role to a ServiceAccount.
+        # AgentCore: the bedrockagentcorecontrol controller (bundled in Managed ACK)
+        # passes the execution role on CreateAgentRuntime; the eks controller passes
+        # the invoker role to its PodIdentityAssociation.
         Resource = [
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-build",
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-microvm-exec",
           "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-ack-lambdamicrovms-controller",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/*-agentcore-exec",
+          "arn:${data.aws_partition.current.partition}:iam::${local.account_id}:role/${local.cluster_name}-dark-factory-agentcore-invoker",
         ]
+      },
+      {
+        Sid    = "AgentCoreRuntimes"
+        Effect = "Allow"
+        # Controller evidence: bedrockagentcorecontrol pkg/resource/agent_runtime/sdk.go
+        # and pkg/resource/agent_runtime_endpoint/sdk.go call get/create/update/delete;
+        # pkg/tags/sync.go calls tag/untag/list-tags. Managed ACK bundles the
+        # controller; there is no substrate-specific controller IAM role.
+        Action = [
+          "bedrock-agentcore:CreateAgentRuntime",
+          "bedrock-agentcore:UpdateAgentRuntime",
+          "bedrock-agentcore:DeleteAgentRuntime",
+          "bedrock-agentcore:GetAgentRuntime",
+          "bedrock-agentcore:CreateAgentRuntimeEndpoint",
+          "bedrock-agentcore:GetAgentRuntimeEndpoint",
+          "bedrock-agentcore:UpdateAgentRuntimeEndpoint",
+          "bedrock-agentcore:DeleteAgentRuntimeEndpoint",
+          "bedrock-agentcore:TagResource", "bedrock-agentcore:UntagResource",
+          "bedrock-agentcore:ListTagsForResource",
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${var.region}:${local.account_id}:runtime/*"
+      },
+      {
+        Sid    = "AgentCoreWorkloadIdentity"
+        Effect = "Allow"
+        # Service evidence: CreateAgentRuntime required create/delete identity and
+        # TagResource on workload-identity-directory/default/workload-identity/*
+        # (observed AccessDenied). The identity is not under the runtime ARN.
+        Action = [
+          "bedrock-agentcore:CreateWorkloadIdentity",
+          "bedrock-agentcore:DeleteWorkloadIdentity",
+          "bedrock-agentcore:TagResource",
+        ]
+        Resource = "arn:${data.aws_partition.current.partition}:bedrock-agentcore:${var.region}:${local.account_id}:workload-identity-directory/*"
       },
       {
         Sid    = "PodIdentityAssociations"
@@ -217,7 +261,8 @@ resource "aws_iam_role_policy" "ack_capability" {
           "eks:DeletePodIdentityAssociation",
           "eks:TagResource", "eks:UntagResource", "eks:ListTagsForResource",
         ]
-        # Scoped to THIS cluster and the associations under it, not every cluster.
+        # Already scoped to THIS cluster and the associations under it, including
+        # AgentCore associations; no change to the Resource scope is needed.
         Resource = [
           module.eks.cluster_arn,
           "arn:${data.aws_partition.current.partition}:eks:${var.region}:${local.account_id}:podidentityassociation/${local.cluster_name}/*",

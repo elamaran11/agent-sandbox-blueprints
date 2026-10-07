@@ -1,11 +1,11 @@
-# Dark Factory — Substrate Diagrams (Kata vs Lambda MicroVM)
+# Dark Factory — Substrate Diagrams (Kata, Lambda MicroVM, AgentCore Runtime)
 
-Visual companion to [`SUBSTRATES.md`](./SUBSTRATE-BENCHMARK.md). All diagrams are
+Visual companion to [`SUBSTRATES.md`](./SUBSTRATES.md). All diagrams are
 Mermaid (render on GitHub).
 
 ---
 
-## 1. Label-routed to two SEPARATE WorkflowTemplates
+## 1. Label-routed to three SEPARATE WorkflowTemplates
 
 The Argo Events sensor routes each label to a **different** WorkflowTemplate, so Kata's certified
 pipeline is never touched by Lambda MicroVM substrate. Kata keeps its SandboxClaim; Lambda provisions a MicroVM directly.
@@ -15,13 +15,17 @@ flowchart TD
     ISSUE["GitHub issue labeled"] --> SENSOR["Argo Events sensor"]
     SENSOR -->|"dark-factory<br/>(issue-labeled-kata)"| DFRUN["df-run<br/>(certified Kata)"]
     SENSOR -->|"darkfactory-lambda<br/>(issue-labeled-lambda)"| DFRUNL["df-run-lambda<br/>(MicroVM-native)"]
+    SENSOR -->|"darkfactory-agentcore<br/>(issue-labeled-agentcore)"| DFRUNA["df-run-agentcore<br/>(runtime session)"]
     DFRUN --> KCLAIM["claim-sandbox<br/>(warm Kata pod)"] --> KCODE["drive-coder"]
     DFRUNL --> PROV["provision-microvm<br/>(create Microvm CR + POST /run)"] --> LCODE["drive-coder"]
+    DFRUNA --> INV["invoke-agentcore<br/>(new runtime session)"] --> ACODE["await-coder<br/>(GitHub PR)"]
+    ACODE --> STOP["stop-agentcore-session"]
+    ACODE --> GATES
     LCODE --> SUSP["suspend-microvm<br/>(scale-to-zero)"]
     KCODE --> GATES["holdout · detect→deploy-test<br/>devops-gate · security-agent"]
     SUSP --> GATES
     GATES --> STATUS["status (consolidated verdict)"]
-    STATUS --> EXIT["onExit: Kata deletes claim ·<br/>Lambda KEEPS suspended VM"]
+    STATUS --> EXIT["onExit: Kata deletes claim ·<br/>Lambda KEEPS suspended VM ·<br/>AgentCore stops session"]
 ```
 
 The Kata graph has **zero MicroVM nodes**. `suspend-microvm` is explicit and lives only in
@@ -75,6 +79,29 @@ flowchart LR
 
 ---
 
+## 3b. AgentCore Runtime substrate — disposable sessions
+
+```mermaid
+flowchart LR
+    KRO["agentcore/ KRO AgentCoreSandbox"] --> ACK["ACK AgentRuntime + execution role"]
+    INV["df-run-agentcore invoke-agentcore"] -->|"workflow UID session"| ACK
+    ACK --> HOST["AgentCore microVM host<br/>/ping and /invocations"]
+    HOST --> CODE["entrypoint.js"]
+    CODE -->|"models: direct, execution role"| BED["Bedrock"]
+    CODE -->|"branch and feedback"| GH["GitHub → PR"]
+    GH --> GATES["shared review gates"]
+    GH --> STOP["stop-agentcore-session<br/>after coder + onExit"]
+    STOP --> ACK
+```
+
+The host reports `HealthyBusy` while the coder runs. A new round starts a new
+session; GitHub holds the branch and feedback. `PUBLIC` is the default network
+mode; `VPC` uses private subnets and the Terraform egress security group. V2
+restores an idle snapshot for each session. See the
+[verified scope](./SUBSTRATES.md).
+
+---
+
 ## 4. Lambda suspend / resume (workflow-driven; warm resume + recreate-fallback)
 
 ```mermaid
@@ -106,7 +133,7 @@ suspend/resume never flap between competing owners.
 
 ---
 
-## 5. End-to-end lifecycle (issue → PR → fix → merge) — both substrates
+## 5. End-to-end lifecycle (issue → PR → fix → merge) — all three substrates
 
 ```mermaid
 flowchart TD
@@ -120,15 +147,17 @@ flowchart TD
     APR --> MERGE["df-merge-teardown:<br/>merge PR + release/terminate sandbox"]
 ```
 
-The loop is identical for both substrates; `df-iterate` reads the originating issue's label to
-route the fix round back to the **same** substrate (Kata pool or Lambda pool).
+The loop is the same for all three; `df-iterate` reads the originating issue's label to
+route the fix round back to the **same** substrate (Kata pool, Lambda MicroVM, or AgentCore Runtime).
 
 ---
 
 ## Legend / key facts
 
-- **Warm pool:** Kata = ready pods (instant); Lambda = bridge pods that RunMicrovm on claim.
+- **Warm pool:** Kata = ready pods (instant); Lambda and AgentCore launch remote compute without a warm pool.
 - **LLM:** Kata → Bifrost (traced in Langfuse); Lambda → Bedrock-direct (exec role).
 - **Workspace:** Kata → mounted volume; Lambda → `/tmp/workspace` (read-only rootfs).
 - **Logs:** Kata → `kubectl logs`; Lambda → `/logs` endpoint (+ build logs in CloudWatch).
 - **Teardown:** Kata → release claim; Lambda → delete `Microvm` CR → TerminateMicrovm.
+- **AgentCore:** no warm pool or suspended workspace; each round invokes and stops
+  a fresh session, with CloudWatch runtime logs and Bedrock-direct inference.

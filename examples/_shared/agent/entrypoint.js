@@ -41,6 +41,9 @@ const ENGINE = (() => {
   return raw.startsWith("kiro") ? "kiro" : "claude";
 })();
 const PROFILE = ENGINE; // back-compat alias used in a few log lines
+// Where this coder is running, for its PR comments. Set by the substrate that
+// spawns it (the AgentCore host sets it); Kata/Lambda leave it unset.
+const SUBSTRATE = process.env.DF_SUBSTRATE || "micro-VM";
 // AWS DevOps Agent — release-readiness review via the coding-agent plugin, run
 // BEFORE the PR opens (docs §6.2). Modes: "claude-plugin" (Claude Code DevOps
 // Agent plugin) | "off". On a clear verdict the coder applies DF_DEVOPS_CLEAR_LABEL
@@ -472,7 +475,7 @@ async function main() {
       "single **consolidated verdict review** on this PR when they finish — that",
       "review (not this body) is the source of truth for merge readiness.",
       "",
-      "_Autonomously implemented in a hardware-isolated micro-VM. DevOps + Security reviews are the real AWS Frontier Agents._",
+      `_Autonomously implemented in a hardware-isolated ${SUBSTRATE}. DevOps + Security reviews are the real AWS Frontier Agents._`,
     ].join("\n");
     let prNumber = "";
     try {
@@ -499,14 +502,13 @@ async function main() {
     try { changed = sh("git", ["diff", "--name-status", `origin/${BASE}...HEAD`], { cwd: repoDir }).trim(); } catch { try { changed = sh("git", ["show", "--name-status", "--oneline", "-1", "HEAD"], { cwd: repoDir }).trim(); } catch {} }
     const filesBlock = changed ? "```\n" + changed.slice(0, 1500) + "\n```" : "_(diff summary unavailable)_";
     await postStickyComment(prNumber, "dark-factory:coding",
-      `### ✅ 🤖 Coding complete (engine: ${ENGINE})\n\nImplemented the change for issue #${ISSUE} on \`${BRANCH}\` in a hardware-isolated Kata micro-VM.\n\n**Files changed:**\n${filesBlock}`);
+      `### ✅ 🤖 Coding complete (engine: ${ENGINE})\n\nImplemented the change for issue #${ISSUE} on \`${BRANCH}\` in a hardware-isolated ${SUBSTRATE}.\n\n**Files changed:**\n${filesBlock}`);
     await postStickyComment(prNumber, "dark-factory:local-test",
       `### ${test.green ? "✅" : "❌"} 🧪 Local testing (in-VM, before PR)\n\n**${test.green ? "Build + unit tests passed" : "Tests NOT green"}** — discovered from the repo's own marker files (no central config).\n\n${test.summary ? "```\n" + String(test.summary).slice(0, 800) + "\n```" : ""}`);
 
     // Post the AWS DevOps Agent verdict as its own commit status, and — when the
-    // verdict clears — apply the handoff label so the hub's Security Agent step
-    // runs next (DevOps-first ordering). When not connected/BLOCK, we leave the
-    // label off (Security stays gated) and report honestly.
+    // verdict clears — apply the optional handoff label. Security's GitHub App
+    // runs independently of the DevOps gate.
     if (DEVOPS_AGENT_MODE !== "off") {
       const dvState = devops.cleared ? "success" : (devops.verdict === "BLOCK" ? "failure" : "error");
       try {

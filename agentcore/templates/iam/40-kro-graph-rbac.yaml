@@ -1,0 +1,44 @@
+{{/*
+  Managed KRO authenticates as the EKS access-entry username of its capability
+  role. AmazonEKSKROPolicy does not grant CRUD on ACK children; without this
+  binding the graph fails on 'cannot get resource roles/agentruntimes'. Grant
+  only the two child kinds, including delete for graph garbage collection.
+*/}}
+{{- if and .Values.agentcore.enabled .Values.agentcore.kroCapability.enabled }}
+{{- $cluster := .Values.agentcore.podIdentity.clusterName }}
+{{- $account := .Values.agentcore.accountId | toString }}
+{{- $role := .Values.agentcore.kroCapability.roleName | default (printf "%s-KROCapabilityRole" $cluster) }}
+{{- $session := .Values.agentcore.kroCapability.sessionName | default "KRO" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cluster }}-kro-agentcore-graph
+  labels:
+    {{- include "agentcore.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+rules:
+  - apiGroups: ["iam.services.k8s.aws"]
+    resources: ["roles", "roles/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["bedrockagentcorecontrol.services.k8s.aws"]
+    resources: ["agentruntimes", "agentruntimes/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cluster }}-kro-agentcore-graph
+  labels:
+    {{- include "agentcore.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cluster }}-kro-agentcore-graph
+subjects:
+  - kind: User
+    name: "arn:aws:sts::{{ $account }}:assumed-role/{{ $role }}/{{ $session }}"
+    apiGroup: rbac.authorization.k8s.io
+{{- end }}

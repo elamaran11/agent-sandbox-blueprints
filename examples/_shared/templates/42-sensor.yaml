@@ -59,11 +59,12 @@ spec:
   template:
     serviceAccountName: dark-factory-sensor
   dependencies:
-    # TWO label dependencies — one per substrate — so each fires a DIFFERENT
+    # THREE label dependencies — one per substrate — so each fires a DIFFERENT
     # WorkflowTemplate (Argo Events trigger conditions can only reference dependency
     # NAMES, not field values, so routing by label ⇒ separate dependencies + triggers):
     #   issue-labeled-kata   → df-run         (certified Kata pipeline)
     #   issue-labeled-lambda → df-run-lambda  (Flow D MicroVM-native pipeline)
+    #   issue-labeled-agentcore → df-run-agentcore (disposable runtime session)
     - name: issue-labeled-kata
       eventSourceName: dark-factory-github
       eventName: dark-factory
@@ -92,6 +93,20 @@ spec:
           - path: body.label.name
             type: string
             value: ["darkfactory-lambda"]
+    - name: issue-labeled-agentcore
+      eventSourceName: dark-factory-github
+      eventName: dark-factory
+      filters:
+        data:
+          - path: headers.X-Github-Event
+            type: string
+            value: ["issues"]
+          - path: body.action
+            type: string
+            value: ["labeled"]
+          - path: body.label.name
+            type: string
+            value: ["darkfactory-agentcore"]
     - name: pr-approved
       eventSourceName: dark-factory-github
       eventName: dark-factory
@@ -291,6 +306,66 @@ spec:
               dest: spec.arguments.parameters.5.value
             - src:
                 dependencyName: issue-labeled-lambda
+                dataKey: body.label.name
+              dest: spec.arguments.parameters.6.value
+
+    # ---- AGENTCORE: darkfactory-agentcore label → df-run-agentcore ----
+    - template:
+        name: submit-df-run-agentcore
+        conditions: "issue-labeled-agentcore"
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                name: df-run-agentcore-pending
+                namespace: {{ .Values.argo.namespace }}
+              spec:
+                workflowTemplateRef:
+                  name: df-run-agentcore
+                arguments:
+                  parameters:
+                    - name: issue-id
+                    - name: issue-number
+                    - name: repo
+                    - name: issue-title
+                    - name: issue-body
+                    - name: base-branch
+                    - name: trigger-label
+          parameters:
+            # Dedup the first run by issue number; fix rounds use an -i<round> suffix.
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataTemplate: "df-run-agentcore-{{ `{{ .Input.body.issue.number }}` }}"
+              dest: metadata.name
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.issue.id
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.issue.number
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.repository.full_name
+              dest: spec.arguments.parameters.2.value
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.issue.title
+              dest: spec.arguments.parameters.3.value
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.issue.body
+              dest: spec.arguments.parameters.4.value
+            - src:
+                dependencyName: issue-labeled-agentcore
+                dataKey: body.repository.default_branch
+              dest: spec.arguments.parameters.5.value
+            - src:
+                dependencyName: issue-labeled-agentcore
                 dataKey: body.label.name
               dest: spec.arguments.parameters.6.value
 

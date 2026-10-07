@@ -20,6 +20,14 @@ const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || "3", 10);
 const ISSUE_NUMBER = process.env.ISSUE_NUMBER || "";
 const BASE_BRANCH = process.env.BASE_BRANCH || "main";
 const TRIGGER_LABEL = process.env.TRIGGER_LABEL || "dark-factory";
+// Which sandbox the coder ran in, for the PR body. Keyed on the label that fired
+// the run — the only substrate signal this hub-side step has.
+const SUBSTRATE_BY_LABEL = {
+  "dark-factory": "Kata micro-VM",
+  "darkfactory-lambda": "AWS Lambda MicroVM",
+  "darkfactory-agentcore": "Amazon Bedrock AgentCore Runtime microVM",
+};
+const SUBSTRATE = SUBSTRATE_BY_LABEL[TRIGGER_LABEL] || "micro-VM";
 const ARGO_NAMESPACE = process.env.ARGO_NAMESPACE || "argo";
 const DEVOPS_CHECK = process.env.DEVOPS_CHECK || "";
 const SECURITY_CHECK = process.env.SECURITY_CHECK || "";
@@ -210,7 +218,7 @@ async function main() {
     // deploy-test only appears when the PR was deployable; omit the row otherwise.
     ...(by["dark-factory/deploy-test"] ? [row("deploy-test", "Deploy test")] : []),
     "",
-    `_Overall: **${overall}**. Autonomously implemented in a hardware-isolated Kata micro-VM; verification ran as independent hub-side steps (see the checks above). Awaiting human review._`,
+    `_Overall: **${overall}**. Autonomously implemented in a hardware-isolated ${SUBSTRATE}; verification ran as independent hub-side steps (see the checks above). Awaiting human review._`,
   ].join("\n");
 
   let body = pr.body || "";

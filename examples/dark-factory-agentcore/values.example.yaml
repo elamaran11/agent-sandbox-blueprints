@@ -1,0 +1,57 @@
+# Copy to values.yaml (gitignored) and edit these chart keys.
+
+trigger:
+  argoEvents:
+    # Repos whose issues fire the factory.
+    repositories:
+      - owner: your-org
+        names:
+          - your-sandbox-repo
+    # Public URL GitHub posts webhooks to. Leave "" and submit Workflows directly
+    # if you have no load balancer — see docs/MANUAL-STEPS.md §2.
+    webhookUrl: ""
+    # LoadBalancer needs the AWS Load Balancer Controller on EKS 1.36+.
+    serviceType: LoadBalancer
+
+# The coder runs in a disposable AgentCore Runtime session (direct Bedrock).
+agentcore:
+  region: us-west-2
+  namespace: agent-sandbox-system
+  # sandboxName is injected by task demo-agentcore (Taskfile var AGENTCORE_SANDBOX, default coder).
+
+# The runtime image uses the shared coder's default CLI (Claude Code). Engine
+# selection is configured in the runtime image, not in this example's payload.
+
+# microvm.enabled is cluster-wide: every example applies the same shared
+# dark-factory-workflow-sandbox Role. Leave it on when Lambda is installed;
+# disabling it here would remove Lambda's MicroVM RBAC rules.
+
+# ── Review agents ────────────────────────────────────────────────────────────
+# OFF by default: limited preview, and the Security Agent needs IAM you create.
+# Full setup steps: docs/MANUAL-STEPS.md §5.
+securityAgent:
+  enabled: false
+  # Required when enabled — all account-specific, so keep them in values.yaml only:
+  # irsaRoleArn: arn:aws:iam::<acct>:role/<irsa-role>
+  # serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<service-role>
+  # diffBucket: <diff-bucket>
+  # idcInstanceArn: arn:aws:sso:::instance/ssoins-...
+  blockLevel: medium      # findings at/above this severity block the merge gate
+
+devopsAgent:
+  enabled: false
+  gate: check             # wait for the DevOps Agent App's check-run
+
+# ── Gates ────────────────────────────────────────────────────────────────────
+holdout:
+  enabled: true
+  threshold: 0.90         # fraction of hidden scenarios that must pass
+
+deployTest:
+  # OFF: this blueprint ships no deploy-test image and terraform creates no repo
+  # for one. Build your own, set .image, then enable.
+  enabled: false
+
+iterate:
+  enabled: true
+  maxIterations: 3

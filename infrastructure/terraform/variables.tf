@@ -152,6 +152,12 @@ variable "llm_gateway_service_account" {
 
 # ── Substrate toggles ─────────────────────────────────────────────────────────
 
+variable "enable_agentcore_vpc" {
+  description = "Create an egress-only security group for AgentCore Runtime VPC mode. Requires private subnets in AgentCore-supported AZs; defaults to public network mode."
+  type        = bool
+  default     = false
+}
+
 variable "create_coder_ecr_repos" {
   description = "Create ECR repositories for the agent (coder) container images used by the Dark Factory examples"
   type        = bool

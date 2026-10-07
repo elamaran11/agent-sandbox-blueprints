@@ -1,0 +1,43 @@
+{{/*
+  A distinct Argo workflow SA is required: EKS allows one Pod Identity
+  association per service account, and dark-factory-workflow can already have
+  the Lambda role. The example chart creates dark-factory-agentcore itself.
+*/}}
+{{- if .Values.agentcore.enabled }}
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
+metadata:
+  name: {{ .Values.agentcore.podIdentity.clusterName }}-dark-factory-agentcore-invoker
+  namespace: {{ include "agentcore.namespace" . }}
+  labels:
+    {{- include "agentcore.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  name: {{ .Values.agentcore.podIdentity.clusterName }}-dark-factory-agentcore-invoker
+  assumeRolePolicyDocument: |
+    {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},"Action":["sts:AssumeRole","sts:TagSession"]}]}
+  inlinePolicies:
+    agentcore-invoke: |
+      {"Version":"2012-10-17","Statement":[
+        {"Effect":"Allow","Action":["bedrock-agentcore:InvokeAgentRuntime","bedrock-agentcore:StopRuntimeSession"],
+         "Resource":"arn:aws:bedrock-agentcore:{{ .Values.agentcore.region }}:{{ .Values.agentcore.accountId }}:runtime/*"}
+      ]}
+  # The actual runtime ARN is not known until ACK creates it; scope to runtimes
+  # in this account/region rather than granting InvokeAgentRuntime on all AWS.
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: {{ .Values.agentcore.podIdentity.clusterName }}-dark-factory-agentcore-invoker
+  namespace: {{ include "agentcore.namespace" . }}
+  labels:
+    {{- include "agentcore.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  clusterName: {{ .Values.agentcore.podIdentity.clusterName }}
+  namespace: {{ .Values.agentcore.invoker.argoNamespace }}
+  serviceAccount: {{ .Values.agentcore.invoker.serviceAccount }}
+  roleARN: "arn:aws:iam::{{ .Values.agentcore.accountId }}:role/{{ .Values.agentcore.podIdentity.clusterName }}-dark-factory-agentcore-invoker"
+{{- end }}

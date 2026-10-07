@@ -1,0 +1,28 @@
+# AgentCore Runtime substrate. Disabled until the cluster opts in.
+namespace: agent-sandbox-system
+
+agentcore:
+  enabled: false
+  accountId: ""
+  region: us-west-2
+  podIdentity:
+    clusterName: SET-BY-TASK-AGENTCORE
+  kroCapability:
+    enabled: true
+    roleName: ""     # defaults to <clusterName>-KROCapabilityRole
+    sessionName: KRO
+  sandbox:
+    name: coder
+  image:
+    # Publish an arm64 image first and pin the digest; a placeholder must not deploy.
+    uri: SET-BY-TASK-AGENTCORE-IMAGE
+  network:
+    mode: PUBLIC
+    subnets: []
+    securityGroups: []
+  lifecycle:
+    idleRuntimeSessionTimeout: 900
+    maxLifetime: 28800
+  invoker:
+    serviceAccount: dark-factory-agentcore
+    argoNamespace: argo

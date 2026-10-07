@@ -85,8 +85,8 @@ claimTtlSeconds: 10800
 # + executable tests the coder NEVER sees are stored in a ConfigMap ON THE HUB
 # (rendered from holdout/<repo>/ below). A hub-side eval step (NOT the Kata VM)
 # checks out the coder's df/issue-N branch, runs the hidden executable tests, and
-# asks a DIFFERENT-FAMILY LLM judge (Nova, vs the coder's Claude — defeats
-# self-preference bias) whether each plain-English scenario is satisfied. A
+# asks a DIFFERENT-FAMILY judge (Amazon Nova vs the coder's Claude), inside the
+# LLM gateway IAM grant, whether each plain-English scenario is satisfied. A
 # scenario PASSES iff its executable test is green AND the judge says yes >=2/3
 # runs. Gate = passRatio >= threshold. The coder is credential-less to the k8s
 # API and never clones the holdout path, so it provably cannot read or edit it.
@@ -97,9 +97,11 @@ holdout:
   # 2-of-3 majority per scenario smooths judge non-determinism.
   judgeRuns: 3
   judgeQuorum: 2
-  # The judge model — MUST be a different family than the coder (claude-sonnet).
-  # Bifrost passes Bedrock model IDs through directly (models: ["*"]); verified
-  # us.amazon.nova-pro-v1:0 → 200 on /anthropic.
+  # The judge MUST be a different model FAMILY from the coder (Claude): a same-
+  # family judge grading its sibling's work reintroduces self-preference bias,
+  # which is the whole reason the judge exists. It must also be inside the LLM
+  # gateway IAM grant (infrastructure/terraform/iam.tf), or every judge call is
+  # a 403 that evaluate.js can only report as "judge=0/3" with all tests green.
   judgeModel: us.amazon.nova-pro-v1:0
   # Bifrost gateway the judge reaches (ClusterIP — same reason as the coder).
   bifrostUrl: ""  # injected by `task demo` (see bifrost.url)

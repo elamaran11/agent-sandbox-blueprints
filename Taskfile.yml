@@ -3,8 +3,10 @@
 #   task up          create cluster + platform (terraform, then GitOps addons)
 #   task kata        add the Kata micro-VM substrate
 #   task lambda      add the AWS Lambda MicroVM substrate
+#   task agentcore   add the AgentCore Runtime substrate (after task agentcore-image)
 #   task demo-kata   run the Dark Factory on Kata
 #   task demo-lambda run the Dark Factory on Lambda MicroVM
+#   task demo-agentcore run the Dark Factory on AgentCore Runtime
 #   task down        destroy everything
 #
 # Every task is idempotent and prints what it is about to do. Nothing here
@@ -17,6 +19,11 @@ vars:
   GITOPS_DIR: infrastructure/gitops
   # Pinned: AWS Lambda MicroVM is only available in select regions.
   REGION: '{{.REGION | default "us-west-2"}}'
+  # The AgentCoreSandbox instance the agentcore chart creates (agentcore/values.yaml
+  # agentcore.sandbox.name) and its namespace. agentcore-v2 and demo-agentcore both
+  # and the bootstrap look it up by this name, so it lives in ONE place.
+  AGENTCORE_SANDBOX: coder
+  AGENTCORE_NAMESPACE: agent-sandbox-system
 
 env:
   AWS_REGION: "{{.REGION}}"
@@ -40,7 +47,7 @@ tasks:
     cmds:
       - |
         missing=""
-        for t in terraform kubectl aws helm task envsubst; do
+        for t in terraform kubectl aws helm task envsubst yq; do
           command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
         done
         if [ -n "$missing" ]; then
@@ -76,7 +83,7 @@ tasks:
       - task: tf:apply
       - task: kubeconfig
       - task: gitops:bootstrap
-      - 'echo "✓ platform ready — next run: task kata and/or task lambda"'
+      - 'echo "✓ platform ready — next run: task kata, task lambda, or task agentcore"'
 
   tf:init:
     desc: terraform init
@@ -144,12 +151,103 @@ tasks:
         vars: { DIR: lambda-microvm/bootstrap }
       - echo "✓ Lambda MicroVM substrate applied"
 
+  agentcore:
+    desc: Add the AgentCore Runtime substrate (builds + pushes the arm64 host image when needed)
+    cmds:
+      # One command like `task kata` / `task lambda`. The runtime is pinned to an
+      # image DIGEST, so the image must exist before the bootstrap renders. If
+      # AGENTCORE_IMAGE is not given, publish it now and record the digest in
+      # agentcore/.image-uri (gitignored); apply-bootstrap and agentcore-v2 read
+      # that file when the variable is empty.
+      - |
+        set -euo pipefail
+        if [ -z '{{.AGENTCORE_IMAGE | default ""}}' ]; then
+          task agentcore-image
+        else
+          printf '%s\n' '{{.AGENTCORE_IMAGE}}' > agentcore/.image-uri
+        fi
+      - task: apply-bootstrap
+        vars: { DIR: agentcore/bootstrap }
+      - task: agentcore-v2
+      - echo "✓ AgentCore Runtime substrate applied and platform version verified"
+
+  agentcore-image:
+    desc: Build and push the arm64 AgentCore host image to the coder MicroVM ECR repo
+    cmds:
+      - |
+        set -euo pipefail
+        ECR_JSON="$(terraform -chdir={{.TF_DIR}} output -json coder_ecr_urls)"
+        REPO="$(printf '%s' "$ECR_JSON" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("coder_microvm", ""))')"
+        [ -n "$REPO" ] || { echo 'ERROR: no arm64 coder ECR repo; enable create_coder_ecr_repos and run task tf:apply' >&2; exit 1; }
+        TAG='{{.IMAGE_TAG | default "latest"}}'
+        REVISION='{{.AGENTCORE_IMAGE_REVISION | default "r1"}}'
+        echo "Publishing arm64 AgentCore host from $REPO:$TAG (revision $REVISION)"
+        URI="$(REGION='{{.REGION}}' IMAGE_NAME="$REPO" CODER_IMAGE="$REPO:$TAG" bash agentcore/image/publish.sh "$REVISION" | tail -n 1)"
+        echo "Digest-pinned image: $URI"
+        printf '%s\n' "$URI" > agentcore/.image-uri
+
+  agentcore-v2:
+    desc: Set the ACK-created AgentCore runtime to V2 (idempotent)
+    cmds:
+      # ACK 1.15.1 pins an SDK without platformVersion. It omits the field on
+      # subsequent updates, so the API preserves V2. Remove this imperative step
+      # when ACK exposes AgentRuntime.spec.platformVersion after its SDK bump.
+      - |
+        set -euo pipefail
+        export AGENTCORE_NETWORK_MODE='{{.AGENTCORE_NETWORK_MODE | default "PUBLIC"}}'
+        source agentcore/network.sh
+        WANT='{{.AGENTCORE_PLATFORM_VERSION | default "V2"}}'
+        WANT_IMAGE='{{.AGENTCORE_IMAGE | default ""}}'
+        [ -n "$WANT_IMAGE" ] || WANT_IMAGE="$(cat agentcore/.image-uri 2>/dev/null || true)"
+        echo "Waiting for AgentCoreSandbox {{.AGENTCORE_NAMESPACE}}/{{.AGENTCORE_SANDBOX}} runtime ID"
+        ID=''
+        for i in $(seq 1 240); do
+          ID="$(kubectl get agentcoresandbox '{{.AGENTCORE_SANDBOX}}' -n '{{.AGENTCORE_NAMESPACE}}' -o jsonpath='{.status.runtimeID}' 2>/dev/null || true)"
+          [ -n "$ID" ] && break
+          sleep 5
+        done
+        [ -n "$ID" ] || { echo 'ERROR: sandbox has no runtime ID after 20 minutes' >&2; exit 1; }
+        # AWS is authoritative; READY on an old network is not a completed sync.
+        poll() {
+          local i state status matched
+          for i in $(seq 1 240); do
+            state="$(aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id "$ID" \
+              --query '{status:status,network:networkConfiguration,platform:platformVersion,image:agentRuntimeArtifact.containerConfiguration.containerUri}' --output json)"
+            status="$(printf '%s' "$state" | python3 -c 'import json,sys;print(json.load(sys.stdin)["status"])')"
+            case "$status" in *FAILED*) echo "ERROR: runtime $ID: $state" >&2; return 1;; esac
+            matched="$(printf '%s' "$state" | python3 -c '
+        import json,sys,os
+        d=json.load(sys.stdin); n=d.get("network") or {}; c=n.get("networkModeConfig") or {}; mode=os.environ["AGENTCORE_NETWORK_MODE"]
+        ok=n.get("networkMode")==mode and (mode=="PUBLIC" or (set(c.get("subnets",[]))==set(json.loads(os.environ["AGENTCORE_SUBNETS"])) and set(c.get("securityGroups",[]))==set(json.loads(os.environ["AGENTCORE_SECURITY_GROUPS"]))))
+        print("yes" if ok and (not sys.argv[1] or d.get("platform")==sys.argv[1]) and (not os.environ.get("WANT_IMAGE") or d.get("image")==os.environ["WANT_IMAGE"]) else "no")
+        ' "$1")"
+            [ "$status" = READY ] && [ "$matched" = yes ] && return 0
+            sleep 5
+          done
+          echo "ERROR: runtime $ID not READY on $AGENTCORE_NETWORK_MODE/$1 in 20 minutes: $state" >&2
+          return 1
+        }
+        export WANT_IMAGE
+        poll ''
+        CUR="$(aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id "$ID" --query platformVersion --output text)"
+        if [ "$CUR" = "$WANT" ]; then echo "✓ AgentCore runtime $ID already on $WANT"; exit 0; fi
+        echo "Updating AgentCore runtime $ID from $CUR to $WANT (snapshot preparation can take minutes)"
+        RT="$(mktemp)"
+        trap 'rm -f "$RT"' EXIT
+        aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id "$ID" \
+          --query '{agentRuntimeArtifact:agentRuntimeArtifact,roleArn:roleArn,networkConfiguration:networkConfiguration,protocolConfiguration:protocolConfiguration,lifecycleConfiguration:lifecycleConfiguration,environmentVariables:environmentVariables}' \
+          --output json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({k:v for k,v in d.items() if v is not None}))' > "$RT"
+        aws bedrock-agentcore-control update-agent-runtime --agent-runtime-id "$ID" \
+          --cli-input-json "file://$RT" --platform-version "$WANT"
+        poll "$WANT"
+        echo "✓ AgentCore runtime $ID READY on $WANT with $AGENTCORE_NETWORK_MODE network"
+
   apply-bootstrap:
     internal: true
     # The bootstrap Applications carry placeholders instead of hardcoded values,
-    # so this repo works forked and under any project_name. Everything they need
-    # comes from terraform outputs — never from the operator's shell or a
-    # hand-edited values file.
+    # so this repo works forked and under any project_name. Cluster values
+    # come from Terraform; the digest and optional network mode come from task
+    # vars. Never require a hand-edited bootstrap manifest.
     #
     # envsubst is deliberately given an explicit variable list: without it, it
     # would also eat legitimate $-syntax inside the manifests (Argo Workflows
@@ -177,6 +275,18 @@ tasks:
           | python3 -c "import json,sys;print(json.load(sys.stdin).get('$ECR_KEY',''))")"
         export CODER_IMAGE_TAG='{{.IMAGE_TAG | default "latest"}}'
 
+        if [ '{{.DIR}}' = agentcore/bootstrap ]; then
+          export AGENTCORE_IMAGE_URI='{{.AGENTCORE_IMAGE | default ""}}'
+          [ -n "$AGENTCORE_IMAGE_URI" ] || AGENTCORE_IMAGE_URI="$(cat ../../agentcore/.image-uri 2>/dev/null || true)"
+          [ -n "$AGENTCORE_IMAGE_URI" ] || { echo 'ERROR: no AgentCore image; run task agentcore (or task agentcore-image)' >&2; exit 1; }
+          [[ "$AGENTCORE_IMAGE_URI" =~ @sha256:[a-f0-9]{64}$ ]] || { echo 'ERROR: AGENTCORE_IMAGE must be an ECR digest-pinned URI (@sha256:...)' >&2; exit 1; }
+          export AGENTCORE_NETWORK_MODE='{{.AGENTCORE_NETWORK_MODE | default "PUBLIC"}}'
+          source ../../agentcore/network.sh
+          export AGENTCORE_SANDBOX='{{.AGENTCORE_SANDBOX}}'
+          export AGENTCORE_NAMESPACE='{{.AGENTCORE_NAMESPACE}}'
+          echo "  agentcore: $AGENTCORE_IMAGE_URI ($AGENTCORE_NETWORK_MODE)"
+        fi
+
         echo "  cluster:  $DESTINATION_CLUSTER"
         echo "  nodeRole: $KARPENTER_NODE_ROLE"
         echo "  repo:     $GITOPS_REPO_URL @ $GITOPS_REVISION"
@@ -189,7 +299,7 @@ tasks:
           echo "           the image (see examples/dark-factory-kata/README.md)."
         fi
 
-        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG $ACCOUNT_ID'
+        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG $ACCOUNT_ID $AGENTCORE_IMAGE_URI $AGENTCORE_NETWORK_MODE $AGENTCORE_SUBNETS $AGENTCORE_SECURITY_GROUPS $AGENTCORE_SANDBOX $AGENTCORE_NAMESPACE'
         for f in ../../{{.DIR}}/*.yaml; do
           envsubst "$VARS" < "$f" | kubectl apply -f -
         done
@@ -206,6 +316,12 @@ tasks:
     cmds:
       - task: demo
         vars: { EXAMPLE: dark-factory-lambda }
+
+  demo-agentcore:
+    desc: Deploy the Dark Factory pipeline on AgentCore Runtime
+    cmds:
+      - task: demo
+        vars: { EXAMPLE: dark-factory-agentcore }
 
   demo:
     internal: true
@@ -278,6 +394,14 @@ tasks:
         # while the sandbox is actually called <cluster> — a silent hang, not an error,
         # because it is polling for a resource that will never exist.
         add microvm.image.name "$CLUSTER"
+        if [ '{{.EXAMPLE}}' = dark-factory-agentcore ]; then
+          # Unlike Lambda's MicrovmImage (account-scoped, so keyed to the cluster),
+          # the AgentCoreSandbox is a namespaced k8s object with a fixed name; the
+          # AgentRuntime it creates is already cluster-unique (<cluster>_dark_factory).
+          # The example's committed placeholder must resolve to that exact name.
+          add agentcore.sandboxName '{{.AGENTCORE_SANDBOX}}'
+          add agentcore.namespace '{{.AGENTCORE_NAMESPACE}}'
+        fi
 
         echo "  cluster=$CLUSTER account=$ACCOUNT bifrost=${BIFROST_IP:-none} tag=$TAG"
 
@@ -299,6 +423,7 @@ tasks:
       - task: lint:leaks
       - task: lint:tasks
       - task: lint:deps
+      - task: lint:values
       - task: lint:render
 
   lint:tf:
@@ -329,7 +454,8 @@ tasks:
         fi
         # And make sure the gitignored config files really are ignored.
         for f in infrastructure/terraform/terraform.tfvars infrastructure/gitops/values.yaml \
-                 examples/dark-factory-kata/values.yaml examples/dark-factory-lambda/values.yaml; do
+                  examples/dark-factory-kata/values.yaml examples/dark-factory-lambda/values.yaml \
+                  examples/dark-factory-agentcore/values.yaml; do
           if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
             echo "✗ $f is TRACKED but must be gitignored"; exit 1
           fi
@@ -407,7 +533,7 @@ tasks:
         #
         # --dry renders each command without executing it, which forces evaluation.
         fail=0
-        for t in up kata lambda demo-kata demo-lambda status down lint; do
+        for t in up kata lambda agentcore agentcore-image agentcore-v2 demo-kata demo-lambda demo-agentcore status down lint; do
           if out="$(task --dry "$t" 2>&1)"; then
             echo "✓ $t template evaluates"
           else
@@ -424,6 +550,11 @@ tasks:
         done
         exit $fail
 
+  lint:values:
+    desc: Fail if an example's defaults.yaml drifts from examples/_shared/values.yaml
+    cmds:
+      - scripts/check-values-sync.sh
+
   lint:deps:
     desc: Fail if the committed _shared subchart archive is stale
     cmds:
@@ -438,7 +569,7 @@ tasks:
         #
         # Re-package into a temp dir and compare against what is committed.
         fail=0
-        for ex in dark-factory-kata dark-factory-lambda; do
+        for ex in dark-factory-kata dark-factory-lambda dark-factory-agentcore; do
           tmp="$(mktemp -d)"
           helm package examples/_shared -d "$tmp" >/dev/null 2>&1
           fresh="$(find "$tmp" -name '*.tgz' | head -1)"
@@ -470,7 +601,7 @@ tasks:
       - |
         set -uo pipefail
         fail=0
-        for ex in dark-factory-kata dark-factory-lambda; do
+        for ex in dark-factory-kata dark-factory-lambda dark-factory-agentcore; do
           helm dependency update "examples/$ex" >/dev/null 2>&1
           N=$(helm template t "examples/$ex" -f "examples/$ex/defaults.yaml" 2>/dev/null | grep -c '^kind:' || true)
           if [ "$N" -lt 20 ]; then
@@ -484,6 +615,14 @@ tasks:
         for c in kata/runtimeclasses kata/nodepools lambda-microvm; do
           if helm template t "$c" >/dev/null 2>&1; then echo "✓ $c renders"; else echo "✗ $c failed to render"; fail=1; fi
         done
+        if helm template t agentcore --set agentcore.enabled=true \
+             --set agentcore.accountId=123456789012 \
+             --set agentcore.podIdentity.clusterName=my-eks-cluster \
+             --set agentcore.image.uri=123456789012.dkr.ecr.us-west-2.amazonaws.com/coder@sha256:0000000000000000000000000000000000000000000000000000000000000000 >/dev/null 2>&1; then
+          echo "✓ agentcore renders with a digest-pinned image"
+        else
+          echo "✗ agentcore failed to render"; fail=1
+        fi
         if helm template t kata/sandbox-templates \
              --set coderTemplate.image=example.dkr.ecr.us-west-2.amazonaws.com/x:1 >/dev/null 2>&1; then
           echo "✓ kata/sandbox-templates renders"
@@ -500,6 +639,12 @@ tasks:
           echo "✓ kata/sandbox-templates image is an unmistakable placeholder"
         else
           echo "✗ kata/sandbox-templates committed a concrete coder image"; fail=1
+        fi
+        if grep -q 'uri: SET-BY-TASK-AGENTCORE-IMAGE' agentcore/values.yaml && \
+           grep -q 'sandboxName: SET-BY-TASK-AGENTCORE' examples/dark-factory-agentcore/defaults.yaml; then
+          echo "✓ agentcore image and example sandbox name are placeholders"
+        else
+          echo "✗ agentcore image or sandbox name is not a placeholder"; fail=1
         fi
         exit $fail
 
@@ -518,6 +663,9 @@ tasks:
       # instead of leaking them when the cluster goes away.
       - kubectl delete sandboxclaims --all -A --ignore-not-found --timeout=180s || true
       - kubectl delete microvms.lambdamicrovms.services.k8s.aws --all -A --ignore-not-found --timeout=300s || true
+      # Delete the ArgoCD owner: self-heal would recreate a directly deleted instance.
+      # Its resources-finalizer cascades to the AgentCore runtime before cluster teardown.
+      - kubectl delete application agentcore-substrate -n argocd --ignore-not-found --timeout=600s || true
 
   tf:destroy:
     desc: terraform destroy

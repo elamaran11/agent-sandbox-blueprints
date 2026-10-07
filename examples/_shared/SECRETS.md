@@ -60,6 +60,11 @@ Use a **fine-grained** personal access token limited to the single target reposi
 | Pull requests | Read and write | Open the PR, comment status, merge on approval |
 | Issues | Read and write | Read the issue spec, apply labels |
 | Commit statuses | Read and write | Publish each gate's verdict on the commit |
+| Webhooks | Read and write (only for automatic registration) | Let Argo Events register the repository webhook |
+
+If you register the webhook by hand, leave `webhookUrl` empty. Argo Events can
+still verify incoming deliveries using the HMAC Secret; webhook registration
+needs the optional Webhooks grant, but HMAC verification does not.
 
 **Do not** grant org-wide or `repo`-classic scope. The agent runs LLM-generated code; the
 token is the one credential it holds, so keep its blast radius to one repo.

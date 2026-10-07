@@ -39,6 +39,10 @@ gitops_target_revision = "main"
 
 # vpc_cidr = "10.0.0.0/16"
 
+# AgentCore Runtime VPC mode: private subnets must be in AgentCore-supported AZs.
+# The runtime uses an egress-only security group and the existing NAT.
+# enable_agentcore_vpc = false
+
 # Platform components only (ArgoCD, Karpenter, CoreDNS). Sandboxes never run here.
 # system_instance_types = ["m5.large"]
 

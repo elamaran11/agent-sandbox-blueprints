@@ -6,6 +6,7 @@ Three layers. Each maps to one folder and is independently deployable.
 infrastructure/   the cluster and platform      (Terraform + ArgoCD)
 kata/             substrate A: Kata micro-VMs   (opt-in)
 lambda-microvm/   substrate B: Lambda MicroVMs  (opt-in)
+agentcore/        substrate C: AgentCore Runtime (opt-in)
 examples/         the Dark Factory pipeline     (opt-in, per substrate)
 ```
 
@@ -43,6 +44,11 @@ because those are imperative SDK calls that ACK does not reconcile.
 That asymmetry is the single most important thing to understand about this repo. See
 [SUBSTRATES.md](SUBSTRATES.md) for the consequences.
 
+**AgentCore Runtime** does not use `SandboxClaim` or `Sandbox`. Its KRO
+`AgentCoreSandbox` instance composes an ACK execution role and `AgentRuntime`.
+The workflow invokes a new runtime session per round, polls GitHub for the PR,
+and stops the session; the runtime stays available for later rounds.
+
 ## The pipeline
 
 Substrate-agnostic. One `WorkflowTemplate` per substrate differing only in how the
@@ -54,7 +60,7 @@ issue labeled
   → Argo Workflow             (claim/provision sandbox → drive agent)
   → agent opens a PR          (it self-reports through GitHub; it has no cluster creds)
   → gates                     (holdout · deploy test · optional external reviewers)
-  → consolidated verdict      (one sticky PR comment)
+  → consolidated verdict      (one persistent PR comment)
   → human approves            (the only thing that can cause a merge)
   → merge + teardown
 ```
@@ -67,8 +73,8 @@ step with cluster write access is the deploy test, and it works in an ephemeral 
 
 | Boundary | Mechanism |
 |---|---|
-| Agent ↔ host kernel | Kata micro-VM or Firecracker MicroVM — own kernel, not a shared-kernel container |
+| Agent ↔ host kernel | Kata micro-VM, Lambda Firecracker MicroVM, or AgentCore Runtime microVM compute — isolated kernels, not shared-kernel containers |
 | Agent ↔ cluster | No SA token; NetworkPolicy denies the control plane and instance metadata |
-| Agent ↔ AWS | Kata: no AWS creds (models via the in-cluster gateway). Lambda: a scoped execution role for Bedrock only |
+| Agent ↔ AWS | Kata: no AWS creds (models via the in-cluster gateway). Lambda and AgentCore: scoped execution roles for direct Bedrock inference |
 | Agent ↔ your repo | One fine-grained, repo-scoped GitHub token |
 | Unreviewed code ↔ main | A human approval event is required to merge |

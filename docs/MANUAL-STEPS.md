@@ -164,6 +164,20 @@ and silently mangles the tag into `...coderatest`.
 needs editing — but build **before** `task kata`, or warm-pool members land in
 `ImagePullBackOff`.
 
+For AgentCore Runtime, build the `coder_microvm` arm64 base image above first.
+`task agentcore` then publishes the host wrapper on top of it (`task
+agentcore-image`, run for you when `AGENTCORE_IMAGE` is unset) and records the
+digest-pinned URI in the gitignored `agentcore/.image-uri`. To deploy a specific
+image instead, pass `AGENTCORE_IMAGE=<repo@sha256:...> task agentcore`. The
+digest is required: changing only an image tag does not update the ACK runtime.
+
+After ACK creates the runtime, `task agentcore` calls `task agentcore-v2` to
+read back its current artifact, role, network, protocol, lifecycle, and env;
+update `platformVersion` to V2 if needed; and wait for `READY`. ACK v1.15.1
+cannot declare `platformVersion`, so this is a temporary imperative post-step,
+not a separate operator command. A later ACK model bump will move V2 into the
+CRD. Confirm V2 region availability in [PREREQUISITES.md](PREREQUISITES.md).
+
 ---
 
 ## 4. Publish the MicroVM code artifact (Lambda substrate only)
@@ -392,7 +406,7 @@ with the teardown — restore it from the duplicate above.
 
 | Looks manual | Actually |
 |---|---|
-| Cluster name, node role, git repo in manifests | Substituted by `task kata`/`task lambda` from Terraform outputs |
+| Cluster name, node role, git repo in manifests | Substituted by `task kata`/`task lambda`/`task agentcore` from Terraform outputs |
 | Agent image URIs in values | Injected by `task demo` from `coder_ecr_urls` |
 | Bifrost address (a ClusterIP, not DNS) | Looked up live by `task demo` |
 | The three GitHub Secrets | Created by ESO from step 1 |

@@ -1,0 +1,52 @@
+# Wave 1: ACK AgentRuntime CRD and the Managed KRO/ACK capabilities must exist.
+# The Taskfile replaces every ${...} placeholder BEFORE applying this Application.
+# In PUBLIC mode subnet/SG placeholders become [] (not strings); in VPC mode the
+# Taskfile serializes Terraform's private subnet IDs and egress SG as YAML lists.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: agentcore-substrate
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
+    path: agentcore
+    helm:
+      releaseName: agentcore
+      valuesObject:
+        namespace: ${AGENTCORE_NAMESPACE}
+        agentcore:
+          enabled: true
+          accountId: "${ACCOUNT_ID}"
+          sandbox:
+            name: ${AGENTCORE_SANDBOX}
+          podIdentity:
+            clusterName: ${DESTINATION_CLUSTER}
+          image:
+            uri: ${AGENTCORE_IMAGE_URI}
+          network:
+            mode: ${AGENTCORE_NETWORK_MODE}
+            subnets: ${AGENTCORE_SUBNETS}
+            securityGroups: ${AGENTCORE_SECURITY_GROUPS}
+  destination:
+    name: ${DESTINATION_CLUSTER}
+    namespace: ${AGENTCORE_NAMESPACE}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

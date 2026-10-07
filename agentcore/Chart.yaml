@@ -1,0 +1,8 @@
+apiVersion: v2
+name: agent-sandbox-agentcore
+description: >-
+  Opt-in AgentCore Runtime substrate for the dark-factory coder. KRO composes
+  the runtime and its execution role; ACK manages the AWS resources.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

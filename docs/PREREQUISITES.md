@@ -6,10 +6,11 @@
 |---|---|---|
 | `terraform` | 1.7 | Creates the cluster and platform IAM |
 | `kubectl` | 1.30 | Applies substrates and examples |
-| `aws` CLI | v2 | Auth, EKS capabilities, MicroVM inspection |
+| `aws` CLI | v2 with `bedrock-agentcore-control` | Auth, EKS capabilities, MicroVM and AgentCore Runtime operations |
 | `helm` | 3.14 | Renders/validates charts locally |
 | [`task`](https://taskfile.dev) | 3 | The one entry point (`task up`, `task kata`, …) |
-| `docker` (with buildx) | — | Builds the agent image; **buildx needed for ARM64** if you use Lambda MicroVM |
+| [`yq`](https://github.com/mikefarah/yq) | v4 (mikefarah, not the python `yq`) | `task lint:values` normalises the example values trees before diffing them |
+| `docker` (with buildx) | — | Builds the agent image; **buildx needed for ARM64** if you use Lambda MicroVM or AgentCore Runtime |
 | `gh` | — | Optional, convenient for creating the demo issue |
 
 `task preflight` checks the required ones and that your config files exist.
@@ -19,6 +20,23 @@
 **Region: `us-west-2`.** Pinned because AWS Lambda MicroVM is only available in select
 regions. The Kata-only path works anywhere nested-virtualization instances exist — change
 `region` in `terraform.tfvars` if you are skipping Lambda MicroVM.
+
+For AgentCore, confirm **AgentCore Runtime is enabled** in your target account
+and region. V2 (used by `task agentcore` after ACK creates the runtime) is
+available in `us-east-1`, `us-east-2`, `us-west-2`, `eu-west-1`, and
+`ap-northeast-1`. Build and push the shared coder for `linux/arm64` to the
+`coder_microvm` ECR repo; `task agentcore` publishes the digest-pinned host
+image on top of it. The Managed ACK capability must include the `bedrockagentcorecontrol`
+controller (it does as of capability version 46.184.0; check with
+`kubectl get crd agentruntimes.bedrockagentcorecontrol.services.k8s.aws`). VPC mode also
+requires `enable_agentcore_vpc=true` in Terraform and **private subnets in
+AgentCore-supported AZs**; PUBLIC is the default. In the live `us-west-2` run,
+the three private subnet AZ IDs were `usw2-az1`, `usw2-az2`, and `usw2-az3`.
+AgentCore uses `AWSServiceRoleForBedrockAgentCoreNetwork` to manage VPC ENIs;
+the runtime execution role does not need EC2 ENI actions. Private subnets
+need NAT egress to reach GitHub, Bedrock, and ECR in this blueprint. After a
+switch back to PUBLIC, AWS-managed ENIs can hold the security group for up to
+eight hours; defer the targeted Terraform SG removal until they disappear.
 
 ### EKS Managed capabilities
 
@@ -30,6 +48,10 @@ region:
 | **ARGOCD** | The GitOps engine |
 | **ACK** | Declarative IAM + S3 for the Lambda MicroVM substrate |
 | **KRO** | Composes those ACK resources into one CRD |
+
+If Identity Center runs in a different region from the EKS cluster, set
+`argocd_idc_region` in `terraform.tfvars` to that region. Managed ArgoCD uses
+it to resolve `argocd_idc_instance_arn` and the admin identities.
 
 If any is unavailable, set the matching `enable_managed_*` to `false` in
 `terraform.tfvars` and install the equivalent yourself — the failure message tells you
@@ -50,6 +72,7 @@ model call.
 | Elastic IPs | The VPC uses one for its NAT gateway |
 | VPCs per region | One is created |
 | AWS Lambda MicroVM limits | Preview service — concurrent MicroVMs may be limited per account |
+| AgentCore Runtime availability and concurrent sessions | Check this account and region before enabling the third substrate |
 
 **Nested virtualization:** Kata needs it, and not every instance family exposes it. The
 `nodepools` values list validated families; if provisioning fails with a capacity error,
@@ -65,9 +88,12 @@ try the bare-metal fallback pool.
 
 ### Optional: the AWS review agents
 
-`gates.securityAgent` / `gates.devopsAgent` are external GitHub Apps tied to specific AWS
-accounts. They are **off by default** so the blueprint works without them — the holdout
-gate and deploy test still exercise the full review loop.
+`securityAgent` and `devopsAgent` use external GitHub Apps tied to specific AWS
+accounts; both flags default to false. Set `review.enabled: false` at the top
+level of your example's gitignored `values.yaml` until the Apps are installed:
+the master review switch defaults to true, and leaving it on adds DAG tasks
+that wait for absent App verdicts. Apply the same override under
+`dark-factory-shared:` for shared values. Holdout can run without either App.
 
 ## Cost
 
@@ -81,6 +107,7 @@ magnitude, running continuously:
 | **NAT gateway** | Hourly + per-GB — often the biggest surprise on a small cluster |
 | Kata nodes | Karpenter-provisioned on demand; consolidate away when idle |
 | Lambda MicroVM | Per active minute — **suspended VMs are the point**, but a leaked non-terminated VM keeps billing |
+| AgentCore Runtime | Check runtime/session pricing for your region; coder sessions stop after each round |
 | Bedrock | Per token, per run |
 | ECR / S3 | Negligible at this scale |
 

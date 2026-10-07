@@ -37,12 +37,31 @@ Symptom → cause → fix, for the failures that actually happen. Ordered by lay
 | KRO graph stuck `Inactive` (cache sync timeout) | Managed KRO only watches the **`kro.run`** API group | The RGD's `schema.group` must be `kro.run` |
 | suspend/resume flapping until the VM dies | Two owners pointing at one VM with conflicting intent | One VM per unit of work; key the CR name to the issue |
 
+## AgentCore Runtime
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| KRO graph rejects resource id `runtime` | KRO reserves that id | Use `agentRuntime` as the child resource id |
+| ACK `AgentRuntime` does not reconcile | Managed ACK bundles the `bedrockagentcorecontrol` controller | Confirm its CRD is installed; do not install a second controller or add a controller IAM role |
+| `AgentRuntime` reports AccessDenied on `CreateAgentRuntime` or `CreateAgentRuntimeEndpoint` | Managed ACK capability role lacks the named action | Check the `AgentCoreRuntimes` statement in `infrastructure/terraform/capabilities.tf`; use the named denied action to diagnose |
+| `CreateAgentRuntime` fails on `TagResource` for a workload identity | The service creates an identity in the default directory outside the runtime ARN | Check `AgentCoreWorkloadIdentity` in `infrastructure/terraform/capabilities.tf` |
+| AWS returns `ConflictException` after deleting a CR mid-reconcile | The runtime remains in AWS without its KRO/ACK owner | Delete the **orphaned AWS runtime** by CLI and wait for AWS deletion to finish before retrying; never delete the `AgentRuntime` or `AgentCoreSandbox` CR mid-reconcile |
+| Workflow waits 15 minutes after a successful PR, then reports `Failed` | `review.enabled=true` adds review DAG tasks even when both review App flags are off | Set `review.enabled=false` in the local values at both scopes until the Apps are installed; read PR head statuses separately |
+| `bedrock-agentcore list-sessions` does not show runtime sessions | This command is for the AgentCore Memory API, not a Runtime inventory | Read workflow logs and stop result; query runtime state with `bedrock-agentcore-control get-agent-runtime` |
+| `invoke-agent-runtime` returns 409 | A coder is already running in that session; the host permits one coder per session | Check the old workflow/session, stop it if its result is ambiguous, then invoke with a **new** workflow UID/session ID |
+| V2 runtime never reaches `READY` | Container did not answer `GET /ping` within 120 seconds, or snapshot preparation failed | Inspect `/aws/bedrock-agentcore/runtimes/` in CloudWatch; confirm the arm64 host binds `0.0.0.0:8080` and answers `Healthy` at startup |
+| `update-agent-runtime` returns `ConflictException` | A prior create/update/delete is still in progress | Poll `aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <id> --query status`; retry only in a terminal state (`READY` or a `*FAILED` status), and investigate failure before retrying |
+| VPC mode fails to reach READY | The failing reason is not established from status alone | Read the AWS runtime failure reason and check subnet AZ support, egress, and security group before retrying |
+| `task agentcore` reports READY/V2 but the requested VPC mode is absent | ArgoCD applies the Application asynchronously; an old sync can keep the prior mode until ACK reconciles | Wait for AWS READY with the requested network mode, subnet IDs, and security group; the verified PUBLIC→VPC switch took about 9.5 minutes. Inspect ArgoCD's operation rather than deleting an `AgentRuntime` or `AgentCoreSandbox` CR |
+| Terraform stays `Still destroying...` on the AgentCore security group after switching back to PUBLIC | Three `agentic_ai` ENIs remained attached in the live run, even after deleting the unused VPC runtime version | Verify the DEFAULT endpoint uses the new PUBLIC version. Check ENIs by security group with `aws ec2 describe-network-interfaces --filters Name=group-id,Values=<sg-id>`. Do not manually detach AWS-managed ENIs; [AWS says they may persist up to eight hours](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agentcore-vpc.html). Keep the security group in Terraform state and retry the targeted apply after the ENIs disappear |
+
 ## Pipeline
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Webhook arrives, no Workflow created | Sensor has stale JetStream consumers after an EventBus restart | Delete the stale consumers and restart the sensor |
-| Your "fix findings" comment does nothing | The pipeline posts as the token owner and ignores its own voice | Comment from a **different** GitHub account |
+| PR comment is ignored after `df-iterate` starts | With `iterate.identityGuard=true`, a PAT shared with the repo owner makes human comments look like the factory's own comments | Use a separate factory identity or disable the guard when the token identity is shared; check the Sensor filter first if no `df-iterate` starts |
+| PR comment arrives but no `df-iterate` workflow appears | Argo Events Sensor rejects the `matches` expression with `Cannot transition token types from VARIABLE [body_comment_body] to VARIABLE [matches]` | See [ROADMAP gap #8](ROADMAP.md); submit `df-iterate` directly with the posted comment while the Sensor filter remains broken |
 | Merge refused despite green checks | Stale findings from an earlier commit being counted | Judge by commit statuses on the **current head**; inline comments carry forward |
 | Agent re-ran but committed nothing | The review note never reached the sandbox | The note must ride in the sandbox's injected env / run payload |
 | Reviews restart on every push | Each new commit re-triggers the external agents (8–15 min each) | Expected; batch fixes into one commit where you can |

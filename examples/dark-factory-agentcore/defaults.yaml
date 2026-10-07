@@ -1,0 +1,394 @@
+# Dark Factory (Flow B) — default values.
+# Deployed on the hub (control-plane) only, alongside Argo Workflows and the
+# Flow A agent-sandbox warm pool.
+
+# Namespace where the warm pool, SandboxClaims, and coder pods live (Flow A).
+# The workflow SA + RBAC are created here so claims are in-namespace.
+namespace: agent-sandbox-system
+
+# Argo Workflows install (already on the hub in the `argo` namespace).
+argo:
+  namespace: argo
+  # How long a COMPLETED workflow (success or failure) is retained before Argo's
+  # controller garbage-collects it. There is NO workflow archive/DB persistence on
+  # this cluster (workflow-controller-configmap has no `persistence:` block), so once
+  # TTL fires the run is gone for good — not archived. 7 days keeps demo/debug history
+  # visible in the Argo UI across a work week. Was 3600 (1h), which silently dropped
+  # runs an hour after they finished.
+  workflowTtlSecondsAfterCompletion: 604800
+
+warmPool:
+  # The Flow A SandboxWarmPool the factory claims from (Kata substrate, default).
+  name: coder-warmpool
+  # Flow D: the Lambda-MicroVM SandboxWarmPool the factory claims from when the
+  # darkfactory-lambda label fires (coder runs in a MicroVM). Must match
+  # agent-sandbox microvm.warmPool.name.
+  lambdaName: coder-warmpool-microvm
+  # Namespace of the pool / where claims + coder pods are created.
+  namespace: agent-sandbox-system
+
+coder:
+  # In-VM control endpoint the workflow drives (the coder image listens here).
+  port: 8080
+  # Agentic engine the coder VM runs. BOTH are first-class and selectable:
+  #   claude  → claude -p (Claude Code, default; wired + tested)
+  #   kiro    → kiro run --headless (Kiro CLI; supported, selectable)
+  # The coder image carries both CLIs; entrypoint.js branches on this value.
+  # (Retained name `profile` for back-compat; value is the engine id.)
+  engine: claude
+  profile: claude-code
+  # Max minutes for a single coder run before the step times out.
+  runTimeoutMinutes: 30
+
+bifrost:
+  # ClusterIP, NOT a service DNS name: a Kata guest's resolver cannot resolve
+  # cluster-internal names. Left empty on purpose — `task demo` resolves the
+  # live ClusterIP from the bifrost Service and injects it.
+  url: ""
+
+# ── Observability: LLM tracing → Langfuse (provided by Bifrost) ──────────────
+# LLM traces/cost/tokens are exported to Langfuse by BIFROST's telemetry plugin
+# (full per-call traces, tagged user-agent=dark-factory-coder). No coder-side or
+# per-claim wiring needed — deliberately not duplicated here. See docs §7a.
+
+github:
+  # Secret (in .namespace) holding the GitHub App / token the workflow uses to
+  # open the PR + maintain the sticky status comment. Key: token.
+  tokenSecret: dark-factory-github
+  tokenKey: token
+  # Sync the token from AWS Secrets Manager via ExternalSecret (same mechanism as
+  # the rest of the platform) instead of a manual kubectl-created secret — so it's
+  # GitOps-managed, reproducible on rebuild, and auto-rotated. The SM secret is a
+  # JSON blob with keys: token, webhook-secret. Creates dark-factory-github in the
+  # argo / argo-events / agent-sandbox-system namespaces (see 05-externalsecret).
+  externalSecret:
+    enabled: true
+    clusterSecretStore: aws-secrets-manager
+    # Namespaced under the project. Do NOT point this at another stack's secret:
+    # a shared secret means that stack's `terraform destroy` deletes YOUR
+    # credential and every run starts failing GitHub auth.
+    secretsManagerKey: agent-sandbox/github
+    refreshInterval: 1h
+
+# Step-container image: needs kubectl + curl + jq to drive claims, poll the
+# coder, and call the GitHub API. alpine/k8s bundles kubectl; curl/jq added at start.
+stepImage: alpine/k8s:1.31.0
+
+# Concurrency: cap total in-flight df-run workflows against the kata pool size.
+maxConcurrentRuns: 3
+
+# Safety-net TTL on a SandboxClaim (reaper backstop if teardown never runs).
+claimTtlSeconds: 10800
+
+# ── P2: Holdout gate ─────────────────────────────────────────────────────────
+# Train/test separation for code (docs/dark-factory §6.1). Hidden BDD scenarios
+# + executable tests the coder NEVER sees are stored in a ConfigMap ON THE HUB
+# (rendered from holdout/<repo>/ below). A hub-side eval step (NOT the Kata VM)
+# checks out the coder's df/issue-N branch, runs the hidden executable tests, and
+# asks a DIFFERENT-FAMILY judge (Amazon Nova vs the coder's Claude), inside the
+# LLM gateway IAM grant, whether each plain-English scenario is satisfied. A
+# scenario PASSES iff its executable test is green AND the judge says yes >=2/3
+# runs. Gate = passRatio >= threshold. The coder is credential-less to the k8s
+# API and never clones the holdout path, so it provably cannot read or edit it.
+holdout:
+  enabled: true
+  # Fraction of scenarios that must pass for the gate to be green.
+  threshold: 0.90
+  # 2-of-3 majority per scenario smooths judge non-determinism.
+  judgeRuns: 3
+  judgeQuorum: 2
+  # The judge MUST be a different model FAMILY from the coder (Claude): a same-
+  # family judge grading its sibling's work reintroduces self-preference bias,
+  # which is the whole reason the judge exists. It must also be inside the LLM
+  # gateway IAM grant (infrastructure/terraform/iam.tf), or every judge call is
+  # a 403 that evaluate.js can only report as "judge=0/3" with all tests green.
+  judgeModel: us.amazon.nova-pro-v1:0
+  # Bifrost gateway the judge reaches (ClusterIP — same reason as the coder).
+  bifrostUrl: ""  # injected by `task demo` (see bifrost.url)
+  # v1: report-only (advisory). Set true to make a failed gate fail the workflow.
+  blocking: false
+  # Node image for the eval step: needs git + node + the languages the executable
+  # tests run in. Reuse the coder image (has git/node/python/go + is already in ECR).
+  evalImage: ""  # injected by `task demo` from the coder ECR repo
+
+# ── P3: Reviews via the REAL AWS Frontier Agents ─────────────────────────────
+# Two independent reviewers run outside the coder VM. Their workflow tasks
+# both start after drive-coder; the GitHub Apps review independently.
+#
+#   1. AWS DevOps Agent — Release Readiness code review (cross-repo deps,
+#      standards, access-control, build+test in an AWS-managed env → BLOCK /
+#      Proceed-with-Caution / Safe-to-Release). Connected via its GitHub App; it
+#      auto-reviews each PR and posts the aws-devops-agent/release-readiness-review
+#      check. The df-run `devops-gate` step waits for that check. (Operational
+#      Readiness / incident-SRE is a separate capability, out of scope here.)
+#   2. AWS Security Agent — code security review (OWASP Top 10, secrets, IAM
+#      misuse, dependency risk). TWO paths, both run: (a) GitHub App → inline
+#      aws-security-agent[bot] findings; (b) headless API — clone → stage
+#      {src,diff} in S3 → create-code-review → start-job → list-findings via the
+#      workflow's IRSA role. Setup: docs/dark-factory/AGENT-INSTALL.md.
+review:
+  # Enable only when the review Apps are installed; turn this off locally when
+  # securityAgent/devopsAgent are disabled, or their DAG tasks still wait.
+  enabled: true
+  # Optional DevOps label-mode signal; Security does not depend on this label.
+  handoffLabel: needs-security-review
+  # AUTO-FIX loop: DISABLED. When on, status.js auto-submitted a df-run fix round on a
+  # ❌ verdict — but that COLLIDED with the comment-driven df-iterate loop (the pipeline's
+  # own verdict/finding comments re-triggered df-iterate), spawning overlapping fix rounds
+  # and runaway commits. The stable model is: agents post findings → ❌ verdict → a HUMAN
+  # comments the fix request → ONE df-iterate round → re-review. Keep this false unless
+  # auto-fix is given hard mutual-exclusion with df-iterate.
+  autoFixFindings: false
+
+# Post ONE consolidated verdict review (Security + DevOps results, LGTM when green)
+# on every PR, so both agents' verdicts are ALWAYS visible in the Reviews section.
+# Why not just add the agents as reviewers? Their GitHub App bots CANNOT be added via
+# the requested_reviewers API (verified: it silently no-ops — Apps aren't collaborators),
+# and they review autonomously + inconsistently (sometimes a formal review, sometimes
+# only an issue comment). This pipeline-posted review is the consistent signal; the
+# agents' own checks (dark-factory/security, aws-devops-agent/...) remain the source of
+# truth. Posted as the workflow's GitHub identity, as a COMMENT (human still owns merge).
+postVerdictReview: true
+
+# ── AWS Security Agent (headless, GitOps-native) ─────────────────────────────
+# The agent SPACE + APPLICATION are reconciled once by the PreSync bootstrap Job
+# (templates/06-securityagent-bootstrap.yaml → scripts/bootstrap-agentspace.sh),
+# which writes their IDs into `secretName`. IAM (IRSA role, service role, S3
+# bucket, OIDC provider) is committed Terraform in iam/securityagent.tf. The
+# per-run review step (scripts/security-agent.sh) reads the Secret. All values
+# below are placeholders — fill them in for YOUR account if you enable the agent.
+securityAgent:
+  # OFF by default: the AWS Security Agent is a limited preview and is not
+  # available to every account. The pipeline runs without it (the review gate
+  # is skipped). See docs/PREREQUISITES.md before enabling.
+  enabled: false
+  region: us-west-2
+  # Agent space name the bootstrap Job finds-or-creates (adopts as-0fa9566... ).
+  spaceName: dark-factory
+  # Committed IAM (iam/securityagent.tf) outputs — the chart consumes, never mints.
+  # Set these only if you enable the agent — they are outputs of the IAM you
+  # create for it (see docs/PREREQUISITES.md), not something this chart mints.
+  irsaRoleArn: ""
+  serviceRoleArn: ""
+  diffBucket: ""
+  # IAM Identity Center instance (create-application → console renders the space).
+  idcInstanceArn: ""  # arn:aws:sso:::instance/ssoins-... (your Identity Center)
+  # Secret (argo ns) the bootstrap Job writes + the review step reads.
+  secretName: dark-factory-securityagent
+  # Bootstrap Job image — MUST have a current aws-cli v2 (the securityagent
+  # service is too new for musl/apk builds). amazon/aws-cli (glibc, always-current
+  # v2) guarantees the verbs; kubectl is fetched at start. Override if you bake a
+  # combined aws-cli+kubectl image.
+  bootstrapImage: public.ecr.aws/aws-cli/aws-cli:latest
+  # df-run security step image — same reason (needs securityagent verbs). The
+  # script is node-free (python3+curl+git+aws), so this glibc image + git suffices.
+  # NOTE: verified in-cluster that Alpine/musl aws-cli 2.32 does NOT have
+  # securityagent — do NOT point this at the coder image.
+  stepImage: public.ecr.aws/aws-cli/aws-cli:latest
+  # Findings BLOCK the merge (per-severity gate). A finding at/above this
+  # riskLevel fails the dark-factory/security check, which fails the run and gates
+  # the merge — so the consolidated verdict can never say "cleared/LGTM" while real
+  # findings exist (that mixed signal was the bug). medium = block medium/high/
+  # critical; informational/low pass as advisory. Set to none to make purely
+  # advisory again, or low/high/critical to tune the gate.
+  blockLevel: medium
+  # Seconds to wait for a review job (validated: ~2.5 min on a small diff).
+  pollTimeoutSeconds: 900
+
+  # ── AWS Security Agent GitHub App (inline bot findings — ADDITIVE) ──────────
+  # The headless S3-diff path above stays running. This ADDS the aws-security-agent
+  # GitHub App (AWSHobbesSecureCode) which — once installed on the repo (one-time
+  # console OAuth, see docs/dark-factory/AGENT-INSTALL.md) — auto-reviews every PR
+  # and posts INLINE findings as `aws-security-agent [Bot]`, exactly like the
+  # DevOps Agent App. The App bot's inline review + the headless dark-factory/
+  # security commit status both run; the pipeline no longer posts its own relay
+  # comment (single-signal design — findings surface in the ONE consolidated
+  # verdict review). merge.js/status.js read the real check so a Security BLOCK
+  # gates the merge.
+  app:
+    enabled: true
+    # The aws-security-agent[bot] posts INLINE PR COMMENTS ("AWS Security Agent is
+    # reviewing…" → findings / "No issues identified") rather than a commit-status
+    # or check-run. So there's nothing for checkRunName/checkContext to match — leave
+    # them empty and don't require them in the merge gate. The merge gate uses the
+    # headless dark-factory/security signal; the App's inline comments are the visible
+    # bot review. If your setup posts a Security check/status, set these + flip
+    # REQUIRE_SECURITY (21-workflowtemplate) to "true" to gate the merge on it.
+    checkContext: ""
+    checkRunName: ""
+    waitSeconds: 900
+
+# ── AWS DevOps Agent (Release Readiness) ─────────────────────────────────────
+# NOTE: unlike the Security Agent, the DevOps Agent has NO headless code-review
+# API. Its release-readiness review is reachable via (a) the GitHub App that
+# auto-reviews every PR and posts a check-run [DEFAULT — native model, matches
+# the AI-DLC blog], (b) MCP/A2A with an Agent-Spaces access key from a hub step,
+# or (c) the coding-agent plugin inside the IDE/CLI. Because the coder VM is
+# credential-less + network-locked AND Claude Code -p doesn't expand plugin
+# commands, the in-VM plugin path can't run there — so we default to the GitHub
+# App check-run and WAIT for it. All paths need ONE one-time console connect
+# (repo ↔ Agent Space); that is the single manual step in the pipeline (docs §6.2).
+devopsAgent:
+  # OFF by default, same reason as securityAgent above.
+  enabled: false
+  # How the df-run devops-gate confirms the DevOps Agent cleared:
+  #   check → wait for the DevOps Agent GitHub App's check-run (DEFAULT, native).
+  #   label → wait for a coder-applied handoffLabel (fallback if you drive DevOps
+  #           via the coding-agent plugin instead of the App).
+  gate: check
+  # Regex matched against check-run names / status contexts the DevOps Agent posts.
+  # CONFIRMED (internal DevSecOps walkthrough): the native GitHub check is
+  # "aws-devops-agent/release-readiness-review". Keep the broader alternation as a
+  # safety net in case the check context varies by environment.
+  # NOTE: JS RegExp — do NOT use a (?i) inline flag (Python/Go syntax; throws
+  # "Invalid group" in node). Case-insensitivity is applied via the `i` flag in
+  # the gate script's `new RegExp(CHECK_CONTEXT, "i")`.
+  checkContext: "(aws-devops-agent/release-readiness-review|devops[- ]?agent|release[- ]?readiness)"
+  # EXACT check-run name (Checks API) the DevOps Agent posts — used by the sticky
+  # status (status.js) + the merge gate (merge.js) to read/require the real verdict.
+  # This is the precise name (not a regex); tune if your environment reports a different name.
+  checkRunName: "aws-devops-agent/release-readiness-review"
+  # How long devops-gate waits for the DevOps Agent to post its verdict. The
+  # managed review typically completes in ~8-10 min (docs), so allow headroom.
+  waitSeconds: 900
+  # (label-mode only) verdicts the coder treats as "cleared" when it drives the
+  # review via the plugin and applies the handoff label itself.
+  clearVerdicts: ["Safe to Release", "Proceed with Caution"]
+
+# Image for hub-side agent steps: needs aws-cli + kubectl + node + git + zip.
+# Reuse the coder image (has node/git/zip); the bootstrap Job adds aws-cli.
+reviewImage: ""  # injected by `task demo` from the coder ECR repo
+
+# ── P3b: Iterate on PR comment ───────────────────────────────────────────────
+# A human comment on a Dark Factory PR routes back to the coder as a revision
+# request (docs §8). df-iterate resolves the PR → df/issue-<n>, then re-submits
+# df-run with iterate-note = the comment (coder appends it to SPEC.md and revises
+# the existing branch). Bounded to maxIterations rounds (label counter on the PR);
+# past the cap, a human breaks the tie.
+iterate:
+  enabled: true
+  # Skip comments authored by the factory's own identity. Leave FALSE when the
+  # factory shares a PAT with the repo owner (the usual case) — otherwise your own
+  # fix comments read as self-triggers and every round is silently skipped.
+  identityGuard: false
+  maxIterations: 3
+
+# ── AgentCore Runtime substrate (df-run-agentcore ONLY) ──────────────────────
+# Each workflow starts a disposable session on the platform-owned runtime. GitHub
+# holds the branch and feedback between rounds; stop and review start in parallel.
+agentcore:
+  region: us-west-2
+  namespace: agent-sandbox-system     # where the AgentCoreSandbox instance lives
+  sandboxName: SET-BY-TASK-AGENTCORE   # task demo-agentcore injects AGENTCORE_SANDBOX (default coder)
+  # aws-cli v2 (has the bedrock-agentcore verbs); kubectl is fetched at step start.
+  stepImage: public.ecr.aws/aws-cli/aws-cli:latest
+  # Pod Identity permits one association per SA. Only invoke/stop use this SA;
+  # the platform chart binds it to the runtime invoker role in the Argo namespace.
+  invokerServiceAccount: dark-factory-agentcore
+
+# ── Language / stack support ─────────────────────────────────────────────────
+# There is NO per-language profile config here — deliberately. Language support is
+# decoupled two ways:
+#   1. Toolchains live in the CODER IMAGE (examples/dark-factory/coder/Dockerfile) —
+#      a generic image carries git/node/python/go (+ add JDK/Cargo/terraform there
+#      when needed). Devs control the toolchain via the image, not platform config.
+#   2. Build/test commands are DISCOVERED from the repo's own marker files by the
+#      coder (package.json→npm, go.mod→go, pyproject→pytest, Cargo.toml→cargo,
+#      pom.xml/build.gradle→maven/gradle, Makefile test target→make test). Devs
+#      control build/test by their repo layout — no central profile to maintain.
+#   3. deploy-test verification kind is AUTO-DETECTED from the changed files
+#      (detect-deployable: *.tf→terraform, k8s manifests/Dockerfile→k8s).
+# So adding a language = extend the coder image + rely on its marker files. No
+# label, no stackProfiles, no pipeline change.
+
+# ── P4: Conditional deploy-test (content-aware) ──────────────────────────────
+# For PRs that touch deployable artifacts, a TRUSTED hub step validates the change
+# with the RIGHT tool for the artifact type (docs §9 / diagram B.4). This is the
+# only step that holds K8s access — never the untrusted coder. detect-deployable
+# classifies the change and emits kind = k8s | terraform | none:
+#   - k8s       → deploy into an ephemeral namespace, wait Ready, teardown (trap).
+#   - terraform → terraform init -backend=false && terraform validate (+ fmt check).
+#                 Validation only — no AWS creds, no apply (no real infra created).
+# deploy-test runs only when kind != none; advisory in v1.
+deployTest:
+  # OFF by default: this blueprint ships no deploy-test image build context
+  # and terraform creates no deploy-test ECR repo, so there is nothing to run.
+  # Build your own image, push it, set .image, then enable.
+  enabled: false
+  # Regex (grep -E) of changed files that mark each artifact kind. k8s takes
+  # precedence when a PR touches both.
+  k8sPatterns: "(Chart\\.yaml|/templates/|k8s/|deployment\\.ya?ml|Dockerfile)"
+  terraformPatterns: "\\.tf$"
+  # Where each kind's files live in the repo (dir or file). If absent, the step
+  # logs "nothing to test" and passes (advisory).
+  manifestPath: "k8s/"        # k8s apply target
+  terraformPath: "infra"      # terraform working dir (repo uses infra/ + app/ layout)
+  # Purpose-built image with kubectl + terraform + node + git + curl (content-aware
+  # deploy-test needs both toolchains). Built from examples/dark-factory/deploy-test.
+  image: ""  # injected by `task demo` from the deploy-test ECR repo
+  # Overall step deadline and the per-workload readiness wait (k8s only).
+  timeoutSeconds: 600
+  readyTimeoutSeconds: 120
+  # Advisory in v1 — posts dark-factory/deploy-test but never fails the run.
+  blocking: false
+
+# ── Observability: metrics + Grafana dashboard ───────────────────────────────
+# df-run emits Prometheus metrics via its metrics: block (df_runs_total by status,
+# df_run_duration_seconds). A headless annotated Service (70-metrics-service) exposes
+# the Argo workflow-controller :9090/metrics so the platform's AMP scraper
+# (kubernetes-service-endpoints job, prometheus.io/scrape) picks it up. A
+# GrafanaDashboard CR (71-grafana-dashboard) renders the Dark Factory dashboard via
+# grafana-operator (same pattern as the agent-platform-* dashboards).
+metrics:
+  enabled: true
+  # The Argo controller serves :9090/metrics over HTTPS with a self-signed cert,
+  # which the platform AMP scraper can't verify. A tiny socat proxy (this image)
+  # terminates that TLS and re-serves plain HTTP :9091 for the scraper.
+  proxyImage: alpine/socat:1.8.0.0
+  grafana:
+    # grafana-operator watches this namespace for GrafanaDashboard CRs.
+    namespace: grafana-operator
+    # Which Grafana instance to import into + folder (matches agent-platform-* CRs).
+    instanceSelector:
+      dashboards: external-grafana
+    folder: "Agent Platform"
+
+# ── P4: Reaper CronJob ───────────────────────────────────────────────────────
+# Crash-net for teardown: sweeps stale ephemeral deploy-test namespaces and
+# abandoned df-run SandboxClaims older than reapAfterSeconds. Backs up the per-run
+# onExit teardown + the claim's own TTL.
+reaper:
+  enabled: true
+  schedule: "*/15 * * * *"      # every 15 min
+  reapAfterSeconds: 10800       # 3h — matches claimTtlSeconds
+  image: alpine/k8s:1.31.0      # kubectl + coreutils date
+
+# Trigger — Argo Events: GitHub webhook EventSource + Sensor → df-run Workflow.
+trigger:
+  argoEvents:
+    enabled: true
+    namespace: argo-events
+    # LoadBalancer (an NLB on EKS) so GitHub can reach the webhook without adding
+    # an ingress controller. ClusterIP keeps it private — then you must expose it
+    # yourself and point webhookUrl at that.
+    serviceType: LoadBalancer
+    eventbusReplicas: 3
+    # JetStream version — MUST match an entry in the argo-events controller-config
+    # jetstream.versions list (verified live: 'latest' → nats:2.10.10).
+    jetstreamVersion: latest
+    # GitHub repos whose issues fire the factory.
+    repositories:
+      - owner: elamaran11
+        names:
+          - dark-factory-sandbox
+    # Public URL GitHub posts webhooks to (ALB ingress host + endpoint).
+    webhookUrl: https://idp.elamaras.people.aws.dev
+    webhookEndpoint: /dark-factory
+    webhookPort: 12000
+    # Secret (in argo-events ns) with keys: token (GitHub API), webhook-secret (HMAC).
+    githubSecret: dark-factory-github
+    # Expose the EventSource via the platform ALB ingress for GitHub to reach it.
+    ingress:
+      enabled: true
+      host: idp.elamaras.people.aws.dev
+      path: /dark-factory

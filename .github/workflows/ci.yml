@@ -54,25 +54,17 @@ jobs:
       - name: Every chart renders
         run: task lint:render
 
-  # The two checks above are cheap and catch the mistakes that actually happened
-  # while building this repo. This one guards the specific trap that the three
-  # example values trees are duplicated by design (a subchart's values are not
-  # visible to parent templates), so an edit to one must be made to all three.
+  # Each example carries a copy of the shared values tree; keep the copies in
+  # sync on the keys they share. Logic lives in scripts/check-values-sync.sh so
+  # `task lint:values` runs the same check locally.
   values-in-sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: examples/_shared/values.yaml matches both defaults.yaml
+      # ubuntu-latest ships mikefarah yq v4 today; pin our own copy so a runner
+      # image change cannot turn this job into a silent no-op.
+      - uses: mikefarah/yq@v4.52.4
+      - name: examples/*/defaults.yaml match examples/_shared/values.yaml
         run: |
-          set -euo pipefail
-          fail=0
-          for ex in dark-factory-kata dark-factory-lambda; do
-            if diff -q examples/_shared/values.yaml "examples/$ex/defaults.yaml" >/dev/null; then
-              echo "✓ examples/$ex/defaults.yaml in sync"
-            else
-              echo "✗ examples/$ex/defaults.yaml has drifted from examples/_shared/values.yaml:"
-              diff examples/_shared/values.yaml "examples/$ex/defaults.yaml" || true
-              fail=1
-            fi
-          done
-          exit $fail
+          yq --version
+          scripts/check-values-sync.sh

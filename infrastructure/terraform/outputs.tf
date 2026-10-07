@@ -23,6 +23,16 @@ output "vpc_id" {
   value       = module.vpc.vpc_id
 }
 
+output "private_subnet_ids" {
+  description = "Private subnet IDs for AgentCore Runtime VPC network mode"
+  value       = module.vpc.private_subnets
+}
+
+output "agentcore_security_group_id" {
+  description = "Egress-only security group ID for AgentCore Runtime (null if enable_agentcore_vpc=false)"
+  value       = one(aws_security_group.agentcore[*].id)
+}
+
 output "oidc_provider_arn" {
   description = "IAM OIDC provider ARN (for IRSA roles added by the substrate blueprints)"
   value       = module.eks.oidc_provider_arn
