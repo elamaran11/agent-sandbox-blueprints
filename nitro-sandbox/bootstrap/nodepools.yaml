@@ -1,0 +1,47 @@
+# EKS Auto Mode NodeClass + NodePool that provision Nitro-sandbox-capable nodes.
+# Wave 0, so a pending sandbox pod has a pool to provision from.
+#
+# clusterName and nodeRole come from terraform outputs, substituted by `task nitro`,
+# not edited into nitro-sandbox/nodepools/values.yaml. Both need terraform to have
+# run with enable_auto_mode=true: without it the cluster has no Auto Mode, the
+# NodeClass kind does not exist, and this Application cannot sync. `task nitro`
+# refuses to apply in that case.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nitro-sandbox-nodepools
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
+    path: nitro-sandbox/nodepools
+    helm:
+      releaseName: nitro-sandbox-nodepools
+      # Override the placeholders committed in nitro-sandbox/nodepools/values.yaml.
+      parameters:
+        - name: clusterName
+          value: ${DESTINATION_CLUSTER}
+        - name: nodeRole
+          value: ${AUTO_MODE_NODE_ROLE}
+  destination:
+    name: ${DESTINATION_CLUSTER}
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

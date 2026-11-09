@@ -1,0 +1,46 @@
+# The Nitro coder SandboxTemplate + SandboxWarmPool that df-run-nitro claims from.
+#
+# Wave 2: after the RuntimeClasses (wave 1). A spare names
+# runtimeClassName: isolated-sandbox and is rejected at admission until that
+# RuntimeClass exists.
+#
+# coderImage is substituted by `task nitro` from the terraform coder_ecr_urls
+# output. It is the same amd64 image the Kata substrate runs, so build and push it
+# first (see examples/dark-factory-nitro/README.md) or the spare sits in
+# ImagePullBackOff.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nitro-sandbox-templates
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
+    path: nitro-sandbox/sandbox-templates
+    helm:
+      releaseName: nitro-sandbox-templates
+      parameters:
+        - name: coderTemplate.image
+          value: ${CODER_IMAGE}:${CODER_IMAGE_TAG}
+  destination:
+    name: ${DESTINATION_CLUSTER}
+    namespace: agent-sandbox-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

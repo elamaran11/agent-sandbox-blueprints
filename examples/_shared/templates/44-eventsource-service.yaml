@@ -38,6 +38,14 @@ metadata:
     service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
 spec:
   type: LoadBalancer
+  # Owned by the AWS Load Balancer Controller the platform installs. Set
+  # explicitly because a cluster with EKS Auto Mode on (enable_auto_mode, for the
+  # Nitro Sandbox substrate) makes eks.amazonaws.com/nlb the default class, and
+  # an unset class would then depend on which admission default wins. Same value
+  # the controller's webhook already stamps, so existing Services do not change.
+  # The one exception is a Service created before the controller was installed:
+  # it has no class, and the field cannot be added in place (TROUBLESHOOTING.md).
+  loadBalancerClass: service.k8s.aws/nlb
   selector:
     eventsource-name: dark-factory-github
     owner-name: dark-factory-github

@@ -1,0 +1,141 @@
+# Values for the Nitro Sandbox coder SandboxTemplate + SandboxWarmPool.
+#
+# Same contract as kata/sandbox-templates (container `coder`, env injected by a
+# SandboxClaim, GitHub token mounted at /etc/secrets), so the shared Dark Factory
+# pipeline drives it unchanged. What differs is how a microVM is sized: see
+# coderTemplate.resources.
+
+# Namespace the pool, claims and coder pods live in. Must match the examples'
+# warmPool.namespace.
+namespace: agent-sandbox-system
+
+nitro:
+  # isolated-sandbox gives each coder pod its own microVM. Do not switch this to
+  # confidential-sandbox as is: it refuses any pod without a Cedar policy
+  # envelope, and an envelope pins the pod spec and name, which a controller-named
+  # spare cannot satisfy.
+  runtimeClassName: isolated-sandbox
+  # The RuntimeClass already carries this toleration. It is repeated here so the
+  # template still reaches the tainted nitro-sandbox NodePool on a cluster whose
+  # RuntimeClasses came from the preview setup without one.
+  tolerations:
+    - key: nitro-sandbox
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+
+coderTemplate:
+  # Overrides, for the same reason as Kata: the claim injects BIFROST_URL, which
+  # the template also sets, and `Allowed` only lets a claim ADD env.
+  #
+  # Know what this costs. A claim that injects env does not adopt a warm spare:
+  # the controller starts a fresh Sandbox from this template (the Sandbox is
+  # labelled agents.x-k8s.io/launch-type=cold). Measured 2026-10-05 on
+  # agent-sandbox v0.5.4. The spare's job is to keep a sandbox node up with this
+  # image already pulled and converted, which is most of a microVM's cold start.
+  envVarsInjectionPolicy: Overrides
+
+  # One Secret at /etc/secrets mode 0400, holding gh-token (+ optional bifrost
+  # key). The coder reads them from disk; they are never in env.
+  secretsMount:
+    enabled: true
+    secretName: dark-factory-github
+
+  # PLACEHOLDER. `task nitro` injects this from the terraform coder_ecr_urls
+  # output: the same amd64 image the Kata substrate runs. Left obviously invalid
+  # so a missing override fails at pull time.
+  image: SET-BY-TASK-NITRO
+
+  # Spares boot before any claim exists, so they idle here. A claimed pod starts
+  # with DF_ISSUE_NUMBER already set (it is a new pod, see above), skips the loop
+  # and execs the baked-in entrypoint.
+  command:
+    - /bin/sh
+    - -c
+    - |
+      echo "[sandbox] idle, waiting for a SandboxClaim to inject DF_ISSUE_NUMBER..."
+      while [ -z "${DF_ISSUE_NUMBER:-}" ]; do sleep 5; done
+      echo "[sandbox] claim injected issue #${DF_ISSUE_NUMBER}, starting coder"
+      if [ -f /app/entrypoint.js ]; then exec node /app/entrypoint.js; fi
+      echo "[sandbox] no coder entrypoint in this image (placeholder), idling"; sleep infinity
+
+  # Lives inside the guest's writable overlay, which limits.ephemeral-storage
+  # sizes (below). Keep it smaller than that limit.
+  workspaceSizeGi: 5
+
+  # The microVM is sized from REQUESTS. A limit above the request can never be
+  # reached, because the VM only has what the request bought:
+  #   cpu: "1"  -> 1 guest vCPU. 1001m would buy 2; there are no fractional vCPUs.
+  #   memory    -> request + 256Mi RuntimeClass overhead is the whole VM.
+  #   ephemeral-storage LIMIT -> size of the guest's writable overlay, which also
+  #                holds /workspace and /tmp. This one is a limit, backwards from
+  #                cpu and memory.
+  # 4Gi is what the Kata coder may burst to, so the agent sees the same ceiling.
+  # At cpu: "1" an m7i.xlarge (3770m allocatable) fits three coders.
+  resources:
+    requests: { cpu: "1", memory: 4Gi, ephemeral-storage: 10Gi }
+    limits: { memory: 4Gi, ephemeral-storage: 10Gi }
+
+  # PLACEHOLDER, injected by `task demo` (Bifrost's ClusterIP, the same value
+  # the Kata coder gets).
+  bifrostUrl: ""
+
+  # The coder's egress allow-list. agent-sandbox puts one NetworkPolicy on every
+  # SandboxTemplate. Leave this out and it applies its "secure default": public
+  # internet only, which also blocks Bifrost (a ClusterIP and a pod IP are both
+  # private addresses), plus a DNS override to 8.8.8.8 and 1.1.1.1. On a cluster
+  # that enforces NetworkPolicy, that default leaves the coder with no LLM
+  # gateway. Measured 2026-10-05: wget to a ClusterIP from the coder timed out
+  # until this list was in place.
+  #
+  # Setting this replaces the default and keeps cluster DNS. Anything not
+  # listed, such as other pods, the API server and the rest of the VPC, stays
+  # blocked. The controller always writes policyTypes Ingress and Egress, so the
+  # empty ingress list denies all inbound traffic; the coder needs none, and
+  # kubectl logs/exec reach the guest without the pod network.
+  #
+  # All of this needs a cluster that enforces NetworkPolicy, and this blueprint
+  # does not turn enforcement on (docs/ROADMAP.md #10). Without it the policy is
+  # accepted and the coder's egress stays open. `task nitro` says which you have.
+  networkPolicy:
+    ingress: []
+    egress:
+      # Cluster DNS. The guest is capped at 100 DNS packets per second.
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - { protocol: UDP, port: 53 }
+          - { protocol: TCP, port: 53 }
+      # The LLM gateway. Must match the platform's bifrost.namespace and port.
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: bifrost
+            podSelector:
+              matchLabels:
+                app.kubernetes.io/name: bifrost
+        ports:
+          - { protocol: TCP, port: 8080 }
+      # GitHub and package registries: public addresses only.
+      - to:
+          - ipBlock:
+              cidr: 0.0.0.0/0
+              except:
+                - 10.0.0.0/8
+                - 172.16.0.0/12
+                - 192.168.0.0/16
+                - 169.254.0.0/16
+
+warmPool:
+  enabled: true
+  name: coder-warmpool-nitro
+  # The SandboxTemplate spares and claimed sandboxes are created from.
+  templateName: coder-sandbox-nitro
+  # Each spare is a running microVM holding one of the node's VM slots and its
+  # full memory. One keeps a node and the image cache warm.
+  targetIdle: 1

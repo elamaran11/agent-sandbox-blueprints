@@ -1,0 +1,10 @@
+# One claim per user. warmPoolRef only: env or volumes here would be refused by
+# the template's Disallowed policies.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxClaim
+metadata:
+  name: user-alice
+  namespace: nitro-demo
+spec:
+  warmPoolRef:
+    name: demo-pool

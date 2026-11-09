@@ -7,6 +7,24 @@ module "eks" {
 
   cluster_endpoint_public_access = var.cluster_endpoint_public_access
 
+  # EKS Auto Mode, for the Nitro Sandbox substrate only (enable_auto_mode). It
+  # runs NEXT TO the system node group and the self-managed Karpenter below:
+  # nitro-sandbox/nodepools defines the only Auto Mode NodePool, so no built-in
+  # node pools are enabled and nothing else moves onto Auto Mode nodes.
+  # The module also attaches the extra cluster-role policies Auto Mode needs and
+  # creates the Auto Mode node role (see auto-mode.tf for its access entry). EKS
+  # turns Auto Mode's block storage (ebs.csi.eks.amazonaws.com) and load balancing
+  # (eks.amazonaws.com/nlb and /alb classes) on with compute. They run beside the
+  # EBS CSI add-on and the AWS Load Balancer Controller; each side manages only the
+  # objects that name its provisioner or class, and the LBC's webhook gives new
+  # LoadBalancer Services its own class.
+  cluster_compute_config = var.enable_auto_mode ? { enabled = true } : {}
+  # Pinned to true while Auto Mode is on. The module otherwise defaults it to
+  # false for Auto Mode clusters, and changing it forces a NEW cluster: flipping
+  # enable_auto_mode on an existing deployment would destroy and recreate the
+  # cluster. Left null when Auto Mode is off, so nothing changes for anyone else.
+  bootstrap_self_managed_addons = var.enable_auto_mode ? true : null
+
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
   control_plane_subnet_ids = module.vpc.private_subnets
@@ -18,9 +36,10 @@ module "eks" {
   # nested-virt nodes (see kata/), and Lambda MicroVM sandboxes do not run on
   # cluster nodes at all — they are remote AWS-managed VMs.
   #
-  # Not using EKS Auto Mode: Kata needs a nested-virtualization launch config
-  # and control over containerd (kata-deploy owns it), which Auto Mode and
-  # Bottlerocket do not provide.
+  # Not using EKS Auto Mode for this group: Kata needs a nested-virtualization
+  # launch config and control over containerd (kata-deploy owns it), which Auto
+  # Mode and Bottlerocket do not provide. Auto Mode is only switched on, for
+  # Nitro Sandbox nodes, by enable_auto_mode above.
   eks_managed_node_groups = {
     system = {
       instance_types = var.system_instance_types

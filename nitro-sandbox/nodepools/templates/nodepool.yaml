@@ -1,0 +1,67 @@
+---
+# Auto Mode NodeClass for Nitro sandbox nodes. Nothing in it turns on pod
+# isolation: on a cluster enabled for the preview, Auto Mode gives every
+# supported instance type the sandbox runtime. What the NodeClass decides is
+# where the nodes go.
+#
+# Private subnets only, picked by the same karpenter.sh/discovery tag the Kata
+# pools use. On Auto Mode a node that lands in a public subnet without a public IP
+# schedules sandbox pods and then fails every image pull with an i/o timeout,
+# which looks like a registry problem and is not one.
+#
+# role is the Auto Mode node role terraform creates when enable_auto_mode=true.
+# A custom NodeClass needs an EC2 access entry with AmazonEKSAutoNodePolicy for
+# that role (infrastructure/terraform/auto-mode.tf), or nodes launch and never
+# join.
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: {{ .Values.name }}
+spec:
+  role: {{ .Values.nodeRole | quote }}
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: {{ .Values.clusterName | quote }}
+  ephemeralStorage:
+    size: {{ .Values.ephemeralStorage }}
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: {{ .Values.name }}
+spec:
+  template:
+    metadata:
+      labels:
+        node-type: nitro-sandbox
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: {{ .Values.name }}
+      # Only sandbox pods tolerate this: the isolated-sandbox and
+      # confidential-sandbox RuntimeClasses carry the toleration, and the RuntimeClass
+      # admission controller merges it into every sandbox pod. Everything else stays
+      # on the system node group, so a sandbox node's VM capacity goes to sandboxes.
+      taints:
+        - key: nitro-sandbox
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+{{ toYaml .Values.instanceTypes | indent 12 }}
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+{{ toYaml .Values.capacityTypes | indent 12 }}
+      expireAfter: 336h
+  limits:
+    cpu: {{ .Values.cpuLimit }}
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: {{ .Values.consolidateAfter }}

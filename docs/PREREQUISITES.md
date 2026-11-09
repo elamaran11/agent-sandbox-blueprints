@@ -35,6 +35,17 @@ If any is unavailable, set the matching `enable_managed_*` to `false` in
 `terraform.tfvars` and install the equivalent yourself — the failure message tells you
 which flag to flip.
 
+### EKS Pod Isolation preview (Nitro Sandbox only)
+
+The Nitro Sandbox substrate needs an account that AWS has enabled for the EKS Pod
+Isolation private preview. No API call or Terraform setting requests that. It also needs
+EKS Auto Mode on the cluster, which Terraform turns on with `enable_auto_mode = true`.
+That switches on Auto Mode compute, block storage and load balancing together (EKS
+enables the three as a set), with no built-in node pools; Kata and Lambda MicroVM do not
+use it.
+Sandbox nodes are on-demand `m7i.xlarge` / `m8i.xlarge`, so they count against the same
+On-Demand vCPU quota as the rest.
+
 ### Bedrock model access
 
 The agent reasons with Anthropic models on Bedrock. Enable model access in the Bedrock
@@ -80,6 +91,7 @@ magnitude, running continuously:
 | System node group | 2 × `m5.large` |
 | **NAT gateway** | Hourly + per-GB — often the biggest surprise on a small cluster |
 | Kata nodes | Karpenter-provisioned on demand; consolidate away when idle |
+| Nitro Sandbox nodes | Auto Mode `m7i.xlarge` / `m8i.xlarge` launched for pending sandbox pods. The warm spare (`targetIdle: 1`) keeps one running around the clock; other nodes go 10 minutes after they empty. Auto Mode adds a per-instance management fee |
 | Lambda MicroVM | Per active minute — **suspended VMs are the point**, but a leaked non-terminated VM keeps billing |
 | Bedrock | Per token, per run |
 | ECR / S3 | Negligible at this scale |

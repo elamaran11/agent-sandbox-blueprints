@@ -1,0 +1,8 @@
+apiVersion: v2
+name: nitro-sandbox-nodepools
+description: >-
+  EKS Auto Mode NodeClass + NodePool that provision Nitro-sandbox-capable nodes
+  for EKS Pod Isolation. Needs a cluster with Auto Mode compute enabled
+  (enable_auto_mode in infrastructure/terraform).
+type: application
+version: 0.1.0

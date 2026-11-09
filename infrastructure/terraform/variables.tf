@@ -158,6 +158,12 @@ variable "create_coder_ecr_repos" {
   default     = true
 }
 
+variable "enable_auto_mode" {
+  description = "Turn on EKS Auto Mode (compute, block storage and load balancing, which EKS enables together; no built-in node pools) next to the system node group. The Nitro Sandbox substrate (nitro-sandbox/) needs it: EKS Pod Isolation nodes are Auto Mode nodes. Your account must also be enabled for the EKS Pod Isolation preview. Kata and Lambda MicroVM do not need it."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource"
   type        = map(string)
