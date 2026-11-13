@@ -1,6 +1,7 @@
 module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.0"
+  source = "terraform-aws-modules/eks/aws"
+  # >= 20.31 for cluster_compute_config (EKS Auto Mode).
+  version = "~> 20.31"
 
   cluster_name    = local.cluster_name
   cluster_version = var.cluster_version
@@ -15,9 +16,11 @@ module "eks" {
   # creates the Auto Mode node role (see auto-mode.tf for its access entry). EKS
   # turns Auto Mode's block storage (ebs.csi.eks.amazonaws.com) and load balancing
   # (eks.amazonaws.com/nlb and /alb classes) on with compute. They run beside the
-  # EBS CSI add-on and the AWS Load Balancer Controller; each side manages only the
-  # objects that name its provisioner or class, and the LBC's webhook gives new
-  # LoadBalancer Services its own class.
+  # EBS CSI add-on and the AWS Load Balancer Controller. Each side manages the
+  # objects carrying its provisioner or class, but Auto Mode also registers
+  # eks.amazonaws.com/nlb as the cluster default for CLASSLESS LoadBalancer
+  # Services, so anything meant for the LBC must pin loadBalancerClass (the
+  # webhook Service does).
   cluster_compute_config = var.enable_auto_mode ? { enabled = true } : {}
   # Pinned to true while Auto Mode is on. The module otherwise defaults it to
   # false for Auto Mode clusters, and changing it forces a NEW cluster: flipping
