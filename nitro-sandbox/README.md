@@ -1,7 +1,9 @@
 # Nitro Sandbox substrate
 
-Runs each agent sandbox as a **pod inside its own microVM**, carved out of the node by
-Nitro Enclaves. This is EKS Pod Isolation, and workloads opt in with one field:
+Runs each agent sandbox as a **pod inside its own microVM**: its own kernel and its
+own memory, isolated by Nitro. The guest's vCPUs are sized from requests and are
+scheduled onto the node's cores, shared when oversubscribed (see
+[capacity](#how-many-sandboxes-fit-on-a-node)). This is EKS Pod Isolation, and workloads opt in with one field:
 `runtimeClassName: isolated-sandbox`. You get standard `kubectl`
 access and in-cluster networking like Kata, without nested virtualization or a
 runtime to install on the node.
@@ -95,8 +97,9 @@ CPU and memory requests (plus the 256Mi overhead) and those 20 slots, whichever 
 first. When a node is full, Auto Mode adds another.
 
 With `cpu: "1"` requests CPU runs out first, at three per node (3770m allocatable), and
-that is what the coder template requests. Sub-core sandboxes fit more densely, but each
-guest still gets a whole vCPU, so twenty of them on a 4-vCPU node share four cores.
+that is what the coder template requests. Sub-core sandboxes fit more densely: each
+microVM's size comes from its requests, not its limits, so 20 sandboxes at `cpu: 100m`
+all run on one 4-vCPU node by sharing CPU time the way any oversubscribed pod does.
 
 Earlier preview builds booted far fewer microVMs than the slots they advertised (one or
 four per node) and left the rest in `ContainerCreating` with `No space left on device` in
@@ -143,12 +146,15 @@ The Kata hardening carries over unchanged and works in the guest: non-root uid 1
 
 The warm pool does less than its name suggests. Every Dark Factory claim injects env,
 and a claim that injects env never adopts the idle spare: agent-sandbox boots a fresh
-sandbox from the template (`agents.x-k8s.io/launch-type: cold`). The spare's job is to
-keep a sandbox node up with the coder image already pulled and converted. On such a node
-the claimed coder's container starts about 4 seconds after scheduling. On a node without
-the image the first coder took 27 seconds, most of it pulling the 1 GB image and
-converting it on first boot. With no sandbox node up at all, Auto Mode launches one
-first; that took about 45 seconds from apply to a running pod with a small image.
+sandbox from the template (`agents.x-k8s.io/launch-type: cold`). A spare's only job is
+to keep a sandbox node up with the coder image already pulled and converted, and that
+spare bills around the clock, so `targetIdle` is `0` by default. On a node that already
+holds the image the claimed coder's container starts about 4 seconds after scheduling.
+On a node without the image the first coder took 27 seconds, most of it pulling the
+1 GB image and converting it on first boot. With no sandbox node up at all, Auto Mode
+launches one first; that took about 45 seconds from apply to a running pod with a small
+image. Set `warmPool.targetIdle` to `1` to trade one idle `m7i.xlarge` for a fast first
+claim.
 
 ## Verify
 

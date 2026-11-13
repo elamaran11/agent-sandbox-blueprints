@@ -95,7 +95,7 @@ fix is requested — you pay for the minutes the agent is actually thinking.
 infrastructure/     Terraform (VPC, EKS, Karpenter, Managed ArgoCD/ACK/KRO) + GitOps addons
 kata/               Kata substrate: 3 VMMs, nested-virt Karpenter pools, sandbox templates
 lambda-microvm/     Lambda MicroVM substrate: ACK controller, KRO graph, hook-server image, shim
-nitro-sandbox/      Nitro Sandbox substrate: Auto Mode NodePool, RuntimeClasses, sandbox templates, samples
+nitro-sandbox/      Nitro Sandbox substrate: Auto Mode NodePool, RuntimeClasses, sandbox templates, samples (up to 20 slots per node, requests size the microVM)
 examples/
   dark-factory-kata/    Run the pattern on Kata
   dark-factory-lambda/  Run the pattern on Lambda MicroVM
@@ -166,8 +166,8 @@ task down        # destroys everything, including the sandboxes and node pools
 |---|---|---|---|
 | **Isolation** | Own kernel per sandbox (VT-x) | Own kernel per sandbox (Firecracker) | Own microVM per pod (Nitro Enclaves) |
 | **Node setup** | Nested-virt Karpenter pools + kata-deploy | None, the VMs are remote | Auto Mode NodePool, nothing installed on the node |
-| **Provisioning** | Pre-warmed pool → instant claim | On-demand, ~90 s cold start | Seconds on a node that holds the image; 27 s for the first 1 GB coder on a node; ~45 s with a small image when Auto Mode adds a node |
-| **Scale to zero** | Node pool consolidates when idle | **VM suspends between rounds** | Empty nodes go after 10 min, but the warm spare keeps one up (`targetIdle: 0` drops it) |
+| **Provisioning** | Pre-warmed pool for env-less claims; the coder's env-injecting claim cold-starts ([ROADMAP #9](docs/ROADMAP.md#9-a-claim-that-injects-env-never-uses-the-warm-pool)) | On-demand, ~90 s cold start | Seconds on a node that holds the image; 27 s for the first 1 GB coder on a node; ~45 s with a small image when Auto Mode adds a node |
+| **Scale to zero** | Node pool consolidates when idle | **VM suspends between rounds** | Empty nodes go after 10 min (`targetIdle: 1` keeps one warm) |
 | **Persistent workspace** | ✅ Volume-backed | ❌ Read-only rootfs (`/tmp` only) | ✅ Volume-backed `Sandbox` (Auto Mode EBS); the Dark Factory coder uses an ephemeral overlay |
 | **GPU** | ✅ via `kata-qemu` (VFIO) | ❌ | Not covered here |
 | **Maturity** | Production-ready | Preview / pre-GA | Private preview |

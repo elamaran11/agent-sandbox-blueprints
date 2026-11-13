@@ -39,8 +39,9 @@ docker push  <account>.dkr.ecr.us-west-2.amazonaws.com/agent-sandbox/dark-factor
 ```
 
 `task nitro` points the coder template at this repo and tag (`terraform output
-coder_ecr_urls`, tag `latest`). A spare that came up before the push sits in
-`ImagePullBackOff` and recovers on its own once the image exists.
+coder_ecr_urls`, tag `latest`). If you set `warmPool.targetIdle` to `1`, a spare
+that came up before the push sits in `ImagePullBackOff` and recovers on its own
+once the image exists.
 
 ## 4. Deploy the pipeline
 

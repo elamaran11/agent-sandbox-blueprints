@@ -75,6 +75,18 @@ sleep 5 && probe
 | Public internet | open | open |
 | Cluster DNS | resolves | resolves (the policy allows kube-dns) |
 
+A direct lookup, since the probe above only exercises TCP connects to known addresses:
+
+```bash
+kubectl exec -n nitro-demo agent -- getent ahosts github.com | head -1
+kubectl exec -n nitro-demo agent -- getent ahosts server.nitro-demo.svc.cluster.local | head -1
+```
+
+Both return an address: cluster lookups go to CoreDNS through the policy's kube-dns
+allow rule, and the recursive answer rides back on the public-internet rule. If this
+hangs or returns nothing, check that your CoreDNS pods carry `k8s-app: kube-dns` (the
+label the policy selects).
+
 The policy took effect about 3 seconds after `kubectl apply`. It allows egress to
 cluster DNS and to every public address, and drops the private ranges, which covers
 other pods, Services, the API server and the rest of the VPC in one rule.

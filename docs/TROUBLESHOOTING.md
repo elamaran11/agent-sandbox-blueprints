@@ -74,6 +74,7 @@ aws lambda-microvms list-microvms --region us-west-2 \
 
 kubectl get sandboxclaims,sandboxes -A      # orphaned sandboxes hold Kata nodes up
 kubectl get nodes -l kata-enabled=true      # should scale to zero when idle
+kubectl get nodes -l eks.amazonaws.com/nitro-sandbox=true   # Nitro: empty ~10 min after the last sandbox (unless targetIdle > 0)
 ```
 
 If `task down` fails partway, re-run it — it deletes sandboxes and `Microvm` CRs before

@@ -91,7 +91,7 @@ magnitude, running continuously:
 | System node group | 2 × `m5.large` |
 | **NAT gateway** | Hourly + per-GB — often the biggest surprise on a small cluster |
 | Kata nodes | Karpenter-provisioned on demand; consolidate away when idle |
-| Nitro Sandbox nodes | Auto Mode `m7i.xlarge` / `m8i.xlarge` launched for pending sandbox pods. The warm spare (`targetIdle: 1`) keeps one running around the clock; other nodes go 10 minutes after they empty. Auto Mode adds a per-instance management fee |
+| Nitro Sandbox nodes | Auto Mode `m7i.xlarge` / `m8i.xlarge` launched for pending sandbox pods, gone 10 minutes after they empty. Setting `warmPool.targetIdle: 1` keeps one running around the clock. Auto Mode adds a per-instance management fee, and `enable_auto_mode` is one-way: only `terraform destroy` turns it back off |
 | Lambda MicroVM | Per active minute — **suspended VMs are the point**, but a leaked non-terminated VM keeps billing |
 | Bedrock | Per token, per run |
 | ECR / S3 | Negligible at this scale |
