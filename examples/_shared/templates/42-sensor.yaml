@@ -78,7 +78,9 @@ spec:
             value: ["labeled"]
           - path: body.label.name
             type: string
-            value: ["dark-factory"]
+            # Anchored: argo-events treats these as unanchored regexes, so a bare
+            # "dark-factory" would also match "dark-factory-wip".
+            value: ["^dark-factory$"]
     - name: issue-labeled-lambda
       eventSourceName: dark-factory-github
       eventName: dark-factory
@@ -92,7 +94,9 @@ spec:
             value: ["labeled"]
           - path: body.label.name
             type: string
-            value: ["darkfactory-lambda"]
+            # Anchored: argo-events treats these as unanchored regexes, so a bare
+            # "darkfactory-lambda" would also match "darkfactory-lambda-wip".
+            value: ["^darkfactory-lambda$"]
     - name: issue-labeled-nitro
       eventSourceName: dark-factory-github
       eventName: dark-factory
@@ -106,7 +110,9 @@ spec:
             value: ["labeled"]
           - path: body.label.name
             type: string
-            value: ["darkfactory-nitro"]
+            # Anchored: argo-events treats these as unanchored regexes, so a bare
+            # "darkfactory-nitro" would also match "darkfactory-nitro-wip".
+            value: ["^darkfactory-nitro$"]
     - name: pr-approved
       eventSourceName: dark-factory-github
       eventName: dark-factory

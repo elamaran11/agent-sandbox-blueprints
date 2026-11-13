@@ -54,6 +54,11 @@ jobs:
       - name: Every chart renders
         run: task lint:render
 
+      # lint:render repackages the subchart before rendering, so on its own it
+      # cannot notice a STALE vendored dark-factory-shared tgz. This can.
+      - name: Vendored subchart archives match _shared
+        run: task lint:deps
+
   # The two checks above are cheap and catch the mistakes that actually happened
   # while building this repo. This one guards the specific trap that the three
   # example values trees are duplicated by design (a subchart's values are not
