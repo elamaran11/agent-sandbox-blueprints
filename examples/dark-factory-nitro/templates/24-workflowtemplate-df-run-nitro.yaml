@@ -17,7 +17,9 @@ It keeps dark-factory.io/managed-by=df-run, which is what the reaper sweeps.
 A claim that injects env does not adopt the pool's idle spare. The controller
 creates a fresh sandbox from the template (agents.x-k8s.io/launch-type=cold), so
 the claim step takes a microVM boot: about 4 s to container start on a node that
-already holds the image, measured 2026-10-05. The spare keeps such a node up.
+already holds the image, measured 2026-10-05. The default pool has no spare,
+which also means the first claim after an idle period pays an Auto Mode node
+start plus a 1 GB image pull.
 
 Parameters (supplied by the trigger / Sensor):
   issue-id, issue-number, repo (owner/name), issue-title, issue-body, base-branch
@@ -188,6 +190,12 @@ spec:
 
     # ---- 1. Claim a Nitro sandbox (creates the SandboxClaim with issue env) ----
     - name: claim-sandbox
+      # Bounded: a claim that can never bind (pool or template missing, NodePool
+      # cpuLimit reached) would otherwise wait forever while holding the per-issue
+      # mutex, which also blocks the same issue on every other substrate. 300 s
+      # covers the slowest measured cold path (Auto Mode node ~46 s + 1 GB image
+      # pull ~27 s) with room to spare.
+      activeDeadlineSeconds: 300
       outputs:
         parameters:
           - name: sandbox
@@ -197,7 +205,7 @@ spec:
         action: create
         setOwnerReference: false
         successCondition: status.conditions.0.status == True
-        failureCondition: status.conditions.0.reason == EnvVarsInjectionRejected
+        failureCondition: status.conditions.0.reason in (EnvVarsInjectionRejected,WarmPoolNotFound,TemplateNotFound)
         manifest: |
           apiVersion: extensions.agents.x-k8s.io/v1beta1
           kind: SandboxClaim

@@ -132,10 +132,15 @@ coderTemplate:
                 - 169.254.0.0/16
 
 warmPool:
+  # Keep the pool even with zero spares: df-run-nitro's claims resolve their
+  # template through warmPoolRef, so a missing pool strands every claim at
+  # WarmPoolNotFound. Scale with targetIdle instead of turning this off.
   enabled: true
   name: coder-warmpool-nitro
   # The SandboxTemplate spares and claimed sandboxes are created from.
   templateName: coder-sandbox-nitro
-  # Each spare is a running microVM holding one of the node's VM slots and its
-  # full memory. One keeps a node and the image cache warm.
-  targetIdle: 1
+  # The coder's claims inject env, which always bypasses the pool (ROADMAP #9),
+  # so a spare is never adopted. Its only job is keeping a node and the image
+  # cache warm, and that node bills around the clock, so the default is none.
+  # Set 1 to trade an idle m7i.xlarge for a faster first claim.
+  targetIdle: 0

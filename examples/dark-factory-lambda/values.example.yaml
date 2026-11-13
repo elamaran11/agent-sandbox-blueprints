@@ -15,6 +15,21 @@ trigger:
     # LoadBalancer needs the AWS Load Balancer Controller on EKS 1.36+.
     serviceType: LoadBalancer
 
+# The same keys again at SUBCHART scope. The EventSource and the holdout
+# ConfigMaps render inside the dark-factory-shared subchart, and a parent-scope
+# value never reaches a subchart: without this block they would keep
+# defaults.yaml's repo, and the holdout gate would mount a ConfigMap that was
+# never rendered. Keep the two blocks identical.
+dark-factory-shared:
+  trigger:
+    argoEvents:
+      repositories:
+        - owner: your-org
+          names:
+            - your-sandbox-repo
+      webhookUrl: ""
+      serviceType: LoadBalancer
+
 # Flow D: the coder runs in a Lambda MicroVM (Bedrock-direct, no Bifrost).
 microvm:
   enabled: true

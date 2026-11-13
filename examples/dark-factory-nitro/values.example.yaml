@@ -17,14 +17,20 @@ trigger:
     # LoadBalancer needs the AWS Load Balancer Controller on EKS 1.36+.
     serviceType: LoadBalancer
 
-# Lambda MicroVM plumbing off. The shared defaults turn it on, which renders a
-# PodIdentityAssociation for a role only `task lambda` creates. Set at both chart
-# scopes: the RBAC that holds it lives in the shared subchart.
-microvm:
-  enabled: false
+# The same keys again at SUBCHART scope. The EventSource and the holdout
+# ConfigMaps render inside the dark-factory-shared subchart, and a parent-scope
+# value never reaches a subchart: without this block they would keep
+# defaults.yaml's repo, and the holdout gate would mount a ConfigMap that was
+# never rendered. Keep the two blocks identical.
 dark-factory-shared:
-  microvm:
-    enabled: false
+  trigger:
+    argoEvents:
+      repositories:
+        - owner: your-org
+          names:
+            - your-sandbox-repo
+      webhookUrl: ""
+      serviceType: LoadBalancer
 
 # Which agentic CLI runs in the sandbox. Both are baked into the coder image.
 coder:
