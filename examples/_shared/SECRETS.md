@@ -3,14 +3,15 @@
 **Nothing here ever goes in git or in a values file** — manifests reference only a
 Secret's *name*.
 
-You need the same GitHub token in **two** places. Two components read it, in
-different namespaces, under different key names. Creating only one is the most
+You need the same GitHub token in **three** places. Three components read it, in
+different namespaces, under different key names. Creating only some of them is the most
 common way to get stuck:
 
 | Secret | Namespace | Keys | Read by |
 |---|---|---|---|
-| `dark-factory-github` | `argo-events` | `token`, `webhookSecret` | EventSource — verifies webhook HMAC, registers the webhook |
-| `dark-factory-github` | `agent-sandbox-system` | `gh-token` | The coder inside the sandbox — clones, pushes, opens the PR |
+| `dark-factory-github` | `argo` | `token` | The workflow steps: status comments, gates, merge |
+| `dark-factory-github` | `argo-events` | `token`, `webhook-secret` | The EventSource: verifies the webhook HMAC, registers the webhook |
+| `dark-factory-github` | `agent-sandbox-system` | `gh-token` | The coder inside the sandbox: clones, pushes, opens the PR |
 
 Two details that fail unhelpfully if missed:
 
@@ -20,19 +21,21 @@ Two details that fail unhelpfully if missed:
   in `ContainerCreating` indefinitely with
   `MountVolume.SetUp failed ... secret "dark-factory-github" not found`. The pod is
   scheduled and the Kata node is healthy, so this looks like a micro-VM problem when
-  it is only a missing Secret. Create it **before** `task kata` — or delete the stuck
-  pods afterwards and the warm pool will recreate them.
+  it is only a missing Secret. Create it **before** `task kata` or `task nitro`, or
+  delete the stuck pods afterwards and the warm pool will recreate them.
 
 ## Option A — quickstart (`kubectl`)
 
-Fine for a demo on a throwaway repo.
+Fine for a demo on a throwaway repo. The examples also render ExternalSecrets for these
+same three Secrets (Option B). With this option, set `github.externalSecret.enabled: false`
+under `dark-factory-shared:` in your `values.yaml` so the two do not fight over them.
 
 ```bash
 GH_TOKEN="ghp_your_token_here"
 # A random HMAC secret for the webhook; you will paste this into GitHub below.
 WEBHOOK_SECRET="$(openssl rand -hex 20)"
 
-for NS in argo-events agent-sandbox-system; do
+for NS in argo argo-events agent-sandbox-system; do
   kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
 done
 
@@ -40,12 +43,17 @@ done
 kubectl create secret generic dark-factory-github \
   --namespace argo-events \
   --from-literal=token="$GH_TOKEN" \
-  --from-literal=webhookSecret="$WEBHOOK_SECRET"
+  --from-literal=webhook-secret="$WEBHOOK_SECRET"
 
 # 2. For the coder in the sandbox — note the DIFFERENT key name.
 kubectl create secret generic dark-factory-github \
   --namespace agent-sandbox-system \
   --from-literal=gh-token="$GH_TOKEN"
+
+# 3. For the workflow steps, which run in the argo namespace.
+kubectl create secret generic dark-factory-github \
+  --namespace argo \
+  --from-literal=token="$GH_TOKEN"
 
 echo "Webhook secret (paste into GitHub): $WEBHOOK_SECRET"
 ```
@@ -74,15 +82,17 @@ token is the one credential it holds, so keep its blast radius to one repo.
 Keeps the credential in Secrets Manager, rotatable, never on your laptop.
 
 ```bash
-aws secretsmanager create-secret \
-  --name dark-factory/github \
-  --secret-string '{"token":"ghp_...","webhookSecret":"..."}' \
+# Terraform already created the empty secret (var.github_secret_name). Add the value.
+aws secretsmanager put-secret-value \
+  --secret-id agent-sandbox/github \
+  --secret-string '{"token":"ghp_...","webhook-secret":"..."}' \
   --region us-west-2
 ```
 
-Then apply `_shared/manifests/05-externalsecret-github.yaml`, which materializes the
-same Secret name from that Secrets Manager entry. This is the path to use for anything
-beyond a demo.
+`task demo-*` then renders three ExternalSecrets (`templates/05-externalsecret-github.yaml`),
+which create the three Secrets above from that entry. This is the path to use for anything
+beyond a demo. [`docs/MANUAL-STEPS.md` §1](../../docs/MANUAL-STEPS.md) has a version that
+keeps the token out of your shell history.
 
 ## The GitHub webhook
 
@@ -90,7 +100,7 @@ Point your repo's webhook at the EventSource:
 
 - **Payload URL:** the ingress/load balancer fronting the `argo-events` EventSource
 - **Content type:** `application/json`
-- **Secret:** the `webhookSecret` value from above
+- **Secret:** the `webhook-secret` value from above
 - **Events:** Issues, Issue comments, Pull requests, Pull request reviews
 
 ```bash
@@ -110,6 +120,6 @@ swapping in an App installation token requires no pipeline change.
 
 ```bash
 kubectl get secret dark-factory-github -n argo-events
-# Should list keys: token, webhookSecret  (values stay opaque)
+# Should list keys: token, webhook-secret  (values stay opaque)
 kubectl get secret dark-factory-github -n argo-events -o jsonpath='{.data}' | tr ',' '\n'
 ```

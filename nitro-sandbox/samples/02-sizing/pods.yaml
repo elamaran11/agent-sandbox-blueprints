@@ -1,0 +1,79 @@
+# Three pods, one image, three ways of asking for resources. Each prints the
+# VM it actually got.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: size-requests
+  namespace: nitro-demo
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "vCPUs:   $(nproc)"
+          echo "memory:  $(awk '/MemTotal/ {printf "%d MiB", $2/1024}' /proc/meminfo)"
+          echo "overlay: $(df -h / | awk 'NR==2 {print $2}')"
+          sleep 3600
+      resources:
+        # Requests size the VM: 1 vCPU, 2Gi + 256Mi of memory.
+        requests:
+          cpu: "1"
+          memory: 2Gi
+        # The writable overlay comes from this LIMIT, backwards from cpu and
+        # memory.
+        limits:
+          ephemeral-storage: 4Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: size-limits-only
+  namespace: nitro-demo
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "vCPUs:   $(nproc)"
+          echo "memory:  $(awk '/MemTotal/ {printf "%d MiB", $2/1024}' /proc/meminfo)"
+          sleep 3600
+      resources:
+        # No requests. The API server copies these limits into requests, and
+        # the VM is sized from those.
+        limits:
+          cpu: "2"
+          memory: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: size-small
+  namespace: nitro-demo
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "vCPUs:   $(nproc)"
+          echo "memory:  $(awk '/MemTotal/ {printf "%d MiB", $2/1024}' /proc/meminfo)"
+          sleep 3600
+      resources:
+        # A VM cannot have a fraction of a core, so 250m still boots 1 vCPU.
+        requests:
+          cpu: 250m
+          memory: 768Mi

@@ -1,0 +1,92 @@
+{{- /*
+SandboxTemplate for the Nitro Sandbox coder. The same isolation invariants as
+the Kata template, with the boundary moved from a nested-virt Kata VM to a
+Nitro-isolated microVM:
+  - runtimeClassName: isolated-sandbox (own kernel, own vCPUs and memory)
+  - automountServiceAccountToken: false (no in-cluster API creds)
+  - runAsNonRoot + RuntimeDefault seccomp + drop ALL + read-only root
+  - workspace and /tmp on emptyDirs inside the guest overlay; models via Bifrost
+  - egress limited to cluster DNS, Bifrost and the public internet, where the
+    cluster enforces NetworkPolicy
+No nodeSelector here: the RuntimeClass's scheduling block adds
+eks.amazonaws.com/nitro-sandbox=true, and Auto Mode provisions a matching node.
+*/ -}}
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: {{ .Values.warmPool.templateName }}
+  namespace: {{ include "agent-sandbox.namespace" . }}
+  labels:
+    {{- include "agent-sandbox.labels" . | nindent 4 }}
+spec:
+  # df-run-nitro drives each claimed coder by injecting per-claim env through
+  # SandboxClaim.spec.env. The operator rejects that unless the template opts in.
+  envVarsInjectionPolicy: {{ .Values.coderTemplate.envVarsInjectionPolicy | default "Allowed" }}
+  {{- with .Values.coderTemplate.networkPolicy }}
+  # Replaces agent-sandbox's internet-only default, which would cut the coder
+  # off from Bifrost and from cluster DNS. See values.yaml.
+  networkPolicy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  podTemplate:
+    metadata:
+      labels:
+        {{- include "agent-sandbox.selectorLabels" . | nindent 8 }}
+        agent-sandbox.io/role: coder
+        agent-sandbox.io/substrate: nitro-sandbox
+    spec:
+      runtimeClassName: {{ .Values.nitro.runtimeClassName }}
+      automountServiceAccountToken: false
+      # One block of env per Service in the namespace is noise inside the VM.
+      enableServiceLinks: false
+      # A terminating sandbox keeps its slot and resources until it is gone, and
+      # the idle loop (sh as PID 1) ignores SIGTERM, so do not hold the default 30 s.
+      terminationGracePeriodSeconds: 5
+      tolerations:
+        {{- toYaml .Values.nitro.tolerations | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: coder
+          image: {{ .Values.coderTemplate.image }}
+          command:
+            {{- toYaml .Values.coderTemplate.command | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: BIFROST_URL
+              value: {{ .Values.coderTemplate.bifrostUrl | quote }}
+          resources:
+            {{- toYaml .Values.coderTemplate.resources | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.coderTemplate.secretsMount.enabled }}
+            - name: coder-secrets
+              mountPath: /etc/secrets
+              readOnly: true
+            {{- end }}
+      volumes:
+        # Both emptyDirs live in the guest's writable overlay, not on the node's
+        # disk, so their real ceiling is limits.ephemeral-storage.
+        - name: workspace
+          emptyDir:
+            sizeLimit: {{ .Values.coderTemplate.workspaceSizeGi }}Gi
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.coderTemplate.secretsMount.enabled }}
+        - name: coder-secrets
+          secret:
+            secretName: {{ .Values.coderTemplate.secretsMount.secretName }}
+            defaultMode: 0400
+        {{- end }}

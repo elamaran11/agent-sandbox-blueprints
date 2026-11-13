@@ -42,6 +42,11 @@ gitops_target_revision = "main"
 # Platform components only (ArgoCD, Karpenter, CoreDNS). Sandboxes never run here.
 # system_instance_types = ["m5.large"]
 
+# EKS Auto Mode for the Nitro Sandbox substrate (task nitro). Needs an account
+# enabled for the EKS Pod Isolation preview. Off by default; Kata and Lambda
+# MicroVM do not use it.
+# enable_auto_mode = true
+
 # Extra IAM roles granted cluster-admin (the identity running terraform always is).
 # admin_role_arns = ["arn:aws:iam::111122223333:role/YourAdminRole"]
 

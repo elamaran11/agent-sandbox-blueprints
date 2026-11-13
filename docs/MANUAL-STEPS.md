@@ -18,7 +18,7 @@ So the credential enters the system exactly once, by hand. **Everything after th
 automated:**
 
 ```
-you, ONCE ──▶ Secrets Manager: dark-factory/github
+you, ONCE ──▶ Secrets Manager: agent-sandbox/github
                  │   ClusterSecretStore, read via EKS Pod Identity (no static keys)
                  ▼
               ExternalSecret ×3  ──▶  k8s Secret in:
@@ -40,8 +40,8 @@ all three Secrets with no human involved.
 read -rs GH_TOKEN                       # -s: not echoed, not in shell history
 WEBHOOK_SECRET="$(openssl rand -hex 20)"
 
-aws secretsmanager create-secret \
-  --name dark-factory/github \
+aws secretsmanager put-secret-value \
+  --secret-id agent-sandbox/github \
   --region us-west-2 \
   --secret-string "$(python3 -c 'import json,os,sys;print(json.dumps({"token":sys.argv[1],"webhook-secret":sys.argv[2]}))' "$GH_TOKEN" "$WEBHOOK_SECRET")"
 
@@ -53,8 +53,8 @@ Terraform creates the empty secret container and the read permission
 (`infrastructure/terraform/secrets.tf`); you supply only the value.
 
 > The secret id must match `github.externalSecret.secretsManagerKey` in the example
-> values and `var.github_secret_name` in Terraform. All three default to
-> `dark-factory/github`.
+> values and `var.github_secret_name` in Terraform. Both default to
+> `agent-sandbox/github`.
 
 **Verify without printing anything sensitive:**
 
@@ -176,6 +176,26 @@ deliberate human decision.
 ```bash
 ./lambda-microvm/image/publish.sh r1      # then set codeArtifactUri to the printed s3:// key
 ```
+
+---
+
+## 4b. Preview access (Nitro Sandbox only)
+
+**Why this is not automated:** EKS Pod Isolation is a private preview. AWS enables an
+account for it; there is no API call or Terraform resource that asks.
+
+After `task nitro`, the first sandbox pod tells you whether you have it:
+
+```bash
+kubectl create ns nitro-demo
+kubectl apply -f nitro-sandbox/samples/01-hello-sandbox/pod.yaml
+kubectl get nodes -l eks.amazonaws.com/nitro-sandbox=true \
+  -o custom-columns='NODE:.metadata.name,SLOTS:.status.allocatable.eks\.amazonaws\.com/nitro-sandbox'
+```
+
+A node with a non-zero slot count means the account is enabled. If the pod stays
+`Pending` and no node with that label ever appears, check the preview enablement before
+anything else.
 
 ---
 
@@ -392,7 +412,7 @@ with the teardown — restore it from the duplicate above.
 
 | Looks manual | Actually |
 |---|---|
-| Cluster name, node role, git repo in manifests | Substituted by `task kata`/`task lambda` from Terraform outputs |
+| Cluster name, node role, git repo in manifests | Substituted by `task kata`/`task lambda`/`task nitro` from Terraform outputs |
 | Agent image URIs in values | Injected by `task demo` from `coder_ecr_urls` |
 | Bifrost address (a ClusterIP, not DNS) | Looked up live by `task demo` |
 | The three GitHub Secrets | Created by ESO from step 1 |

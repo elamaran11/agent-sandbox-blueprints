@@ -6,6 +6,7 @@ Three layers. Each maps to one folder and is independently deployable.
 infrastructure/   the cluster and platform      (Terraform + ArgoCD)
 kata/             substrate A: Kata micro-VMs   (opt-in)
 lambda-microvm/   substrate B: Lambda MicroVMs  (opt-in)
+nitro-sandbox/    substrate C: Nitro Sandbox    (opt-in, private preview)
 examples/         the Dark Factory pipeline     (opt-in, per substrate)
 ```
 
@@ -22,7 +23,7 @@ else is reconciled from git.
 
 ## The sandbox contract
 
-Both substrates implement the same three upstream CRDs, which is why the pipeline does not
+Every substrate implements the same three upstream CRDs, which is why the pipeline does not
 care which one it is running on:
 
 | CRD | Meaning |
@@ -33,6 +34,11 @@ care which one it is running on:
 
 **Kata** implements this natively: a `Sandbox` *is* a pod, running under a Kata
 `RuntimeClass` on a nested-virt node.
+
+**Nitro Sandbox** does too, the same way: a `Sandbox` is a pod under the
+`isolated-sandbox` RuntimeClass, and EKS Pod Isolation boots it in its own microVM on an
+Auto Mode node. Nothing runs on the node for it, no bridge pod and no controller beyond
+agent-sandbox.
 
 **Lambda MicroVM** cannot — the sandbox is a remote AWS resource, not a pod. So the
 `SandboxTemplate` there materializes a small **bridge pod** that creates a `Microvm` CR,
@@ -67,8 +73,8 @@ step with cluster write access is the deploy test, and it works in an ephemeral 
 
 | Boundary | Mechanism |
 |---|---|
-| Agent ↔ host kernel | Kata micro-VM or Firecracker MicroVM — own kernel, not a shared-kernel container |
+| Agent ↔ host kernel | Kata micro-VM, Nitro-isolated microVM or Firecracker MicroVM: own kernel, not a shared-kernel container |
 | Agent ↔ cluster | No SA token; NetworkPolicy denies the control plane and instance metadata |
-| Agent ↔ AWS | Kata: no AWS creds (models via the in-cluster gateway). Lambda: a scoped execution role for Bedrock only |
+| Agent ↔ AWS | Kata and Nitro: no AWS creds (models via the in-cluster gateway; a Nitro guest's metadata endpoint answers placement only and returns 404 for every credential path, even with an IMDSv2 token). Lambda: a scoped execution role for Bedrock only |
 | Agent ↔ your repo | One fine-grained, repo-scoped GitHub token |
 | Unreviewed code ↔ main | A human approval event is required to merge |

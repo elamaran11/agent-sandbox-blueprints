@@ -23,4 +23,5 @@ infrastructure/terraform/terraform.tfvars
 infrastructure/gitops/values.yaml
 examples/dark-factory-kata/values.yaml
 examples/dark-factory-lambda/values.yaml
+examples/dark-factory-nitro/values.yaml
 tfplan

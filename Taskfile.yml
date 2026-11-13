@@ -3,8 +3,10 @@
 #   task up          create cluster + platform (terraform, then GitOps addons)
 #   task kata        add the Kata micro-VM substrate
 #   task lambda      add the AWS Lambda MicroVM substrate
+#   task nitro       add the Nitro Sandbox substrate (EKS Pod Isolation, preview)
 #   task demo-kata   run the Dark Factory on Kata
 #   task demo-lambda run the Dark Factory on Lambda MicroVM
+#   task demo-nitro  run the Dark Factory on Nitro Sandbox
 #   task down        destroy everything
 #
 # Every task is idempotent and prints what it is about to do. Nothing here
@@ -76,7 +78,7 @@ tasks:
       - task: tf:apply
       - task: kubeconfig
       - task: gitops:bootstrap
-      - 'echo "✓ platform ready — next run: task kata and/or task lambda"'
+      - 'echo "✓ platform ready, next run: task kata, task lambda and/or task nitro"'
 
   tf:init:
     desc: terraform init
@@ -144,6 +146,49 @@ tasks:
         vars: { DIR: lambda-microvm/bootstrap }
       - echo "✓ Lambda MicroVM substrate applied"
 
+  nitro:
+    desc: Add the Nitro Sandbox substrate (EKS Pod Isolation on Auto Mode, preview)
+    cmds:
+      - task: check:auto-mode
+      - task: apply-bootstrap
+        vars: { DIR: nitro-sandbox/bootstrap }
+      - |
+        # The coder template's egress list is a NetworkPolicy, and a cluster that
+        # does not enforce policy accepts it and does nothing. Say which this is.
+        NP="$(kubectl get configmap amazon-vpc-cni -n kube-system \
+                -o jsonpath='{.data.enable-network-policy-controller}' 2>/dev/null || true)"
+        if [ "$NP" = "true" ]; then
+          echo "✓ NetworkPolicy is enforced: the coder's egress list applies"
+        else
+          echo "NOTE: this cluster does not enforce NetworkPolicy, so the coder's egress list does nothing."
+          echo "      Read nitro-sandbox/samples/04-network-policy and docs/ROADMAP.md #10 before turning it on."
+        fi
+      - echo "✓ Nitro Sandbox substrate applied, RuntimeClasses isolated-sandbox and confidential-sandbox"
+      - 'echo "  no node yet: Auto Mode launches one when the first sandbox pod is pending (about a minute)"'
+
+  check:auto-mode:
+    internal: true
+    dir: "{{.TF_DIR}}"
+    cmds:
+      - |
+        # Nitro Sandbox nodes are EKS Auto Mode nodes. Without Auto Mode on the
+        # cluster the NodeClass kind does not exist, ArgoCD cannot sync the
+        # nodepools Application, and every sandbox pod waits forever. Stop here
+        # with the fix instead.
+        #
+        # Read it through -json, not -raw: with no state or no such output,
+        # `terraform output -raw` prints its "No outputs found" warning to STDOUT
+        # and exits 0, so the warning text would pass for a role name.
+        ROLE="$(terraform output -json 2>/dev/null \
+          | python3 -c 'import json,sys; print((json.load(sys.stdin).get("auto_mode_node_role") or {}).get("value") or "")' 2>/dev/null || true)"
+        if [ -z "$ROLE" ]; then
+          echo "ERROR: no EKS Auto Mode node role in the terraform outputs."
+          echo "       Set enable_auto_mode = true in terraform.tfvars, then: task tf:apply"
+          echo "       Your account must also be enabled for the EKS Pod Isolation preview."
+          exit 1
+        fi
+        echo "✓ Auto Mode node role: $ROLE"
+
   apply-bootstrap:
     internal: true
     # The bootstrap Applications carry placeholders instead of hardcoded values,
@@ -163,6 +208,11 @@ tasks:
         export KARPENTER_NODE_ROLE="$(out karpenter_node_role)"
         export GITOPS_REPO_URL="$(out gitops_repo_url)"
         export GITOPS_REVISION="$(out gitops_target_revision)"
+        # The Nitro Sandbox NodeClass runs its nodes as this role. Empty when
+        # enable_auto_mode=false. Read through -json so a state that predates the
+        # output yields "" instead of failing task kata / task lambda.
+        export AUTO_MODE_NODE_ROLE="$(terraform output -json 2>/dev/null \
+          | python3 -c 'import json,sys; print((json.load(sys.stdin).get("auto_mode_node_role") or {}).get("value") or "")' 2>/dev/null || true)"
         # The Lambda substrate builds IAM role ARNs from this. Empty means
         # "arn:aws:iam:::role/..." and every PodIdentityAssociation fails with
         # "Cross-account pass role is not allowed" -- which sounds like a trust
@@ -179,6 +229,7 @@ tasks:
 
         echo "  cluster:  $DESTINATION_CLUSTER"
         echo "  nodeRole: $KARPENTER_NODE_ROLE"
+        echo "  autoRole: ${AUTO_MODE_NODE_ROLE:-<none>}"
         echo "  repo:     $GITOPS_REPO_URL @ $GITOPS_REVISION"
         echo "  image:    ${CODER_IMAGE:-<none>}:$CODER_IMAGE_TAG"
         echo "  account:  $ACCOUNT_ID"
@@ -189,7 +240,7 @@ tasks:
           echo "           the image (see examples/dark-factory-kata/README.md)."
         fi
 
-        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG $ACCOUNT_ID'
+        VARS='$DESTINATION_CLUSTER $KARPENTER_NODE_ROLE $AUTO_MODE_NODE_ROLE $GITOPS_REPO_URL $GITOPS_REVISION $CODER_IMAGE $CODER_IMAGE_TAG $ACCOUNT_ID'
         for f in ../../{{.DIR}}/*.yaml; do
           envsubst "$VARS" < "$f" | kubectl apply -f -
         done
@@ -206,6 +257,12 @@ tasks:
     cmds:
       - task: demo
         vars: { EXAMPLE: dark-factory-lambda }
+
+  demo-nitro:
+    desc: Deploy the Dark Factory pipeline on Nitro Sandbox
+    cmds:
+      - task: demo
+        vars: { EXAMPLE: dark-factory-nitro }
 
   demo:
     internal: true
@@ -329,7 +386,8 @@ tasks:
         fi
         # And make sure the gitignored config files really are ignored.
         for f in infrastructure/terraform/terraform.tfvars infrastructure/gitops/values.yaml \
-                 examples/dark-factory-kata/values.yaml examples/dark-factory-lambda/values.yaml; do
+                 examples/dark-factory-kata/values.yaml examples/dark-factory-lambda/values.yaml \
+                 examples/dark-factory-nitro/values.yaml; do
           if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
             echo "✗ $f is TRACKED but must be gitignored"; exit 1
           fi
@@ -407,7 +465,7 @@ tasks:
         #
         # --dry renders each command without executing it, which forces evaluation.
         fail=0
-        for t in up kata lambda demo-kata demo-lambda status down lint; do
+        for t in up kata lambda nitro demo-kata demo-lambda demo-nitro status down lint; do
           if out="$(task --dry "$t" 2>&1)"; then
             echo "✓ $t template evaluates"
           else
@@ -438,7 +496,7 @@ tasks:
         #
         # Re-package into a temp dir and compare against what is committed.
         fail=0
-        for ex in dark-factory-kata dark-factory-lambda; do
+        for ex in dark-factory-kata dark-factory-lambda dark-factory-nitro; do
           tmp="$(mktemp -d)"
           helm package examples/_shared -d "$tmp" >/dev/null 2>&1
           fresh="$(find "$tmp" -name '*.tgz' | head -1)"
@@ -470,7 +528,7 @@ tasks:
       - |
         set -uo pipefail
         fail=0
-        for ex in dark-factory-kata dark-factory-lambda; do
+        for ex in dark-factory-kata dark-factory-lambda dark-factory-nitro; do
           helm dependency update "examples/$ex" >/dev/null 2>&1
           N=$(helm template t "examples/$ex" -f "examples/$ex/defaults.yaml" 2>/dev/null | grep -c '^kind:' || true)
           if [ "$N" -lt 20 ]; then
@@ -481,7 +539,7 @@ tasks:
         done
         N=$(helm template t infrastructure/gitops/platform 2>/dev/null | grep -c '^kind:' || true)
         if [ "$N" -ge 4 ]; then echo "✓ platform renders $N Applications"; else echo "✗ platform rendered $N"; fail=1; fi
-        for c in kata/runtimeclasses kata/nodepools lambda-microvm; do
+        for c in kata/runtimeclasses kata/nodepools lambda-microvm nitro-sandbox/runtimeclasses nitro-sandbox/nodepools; do
           if helm template t "$c" >/dev/null 2>&1; then echo "✓ $c renders"; else echo "✗ $c failed to render"; fail=1; fi
         done
         if helm template t kata/sandbox-templates \
@@ -500,6 +558,19 @@ tasks:
           echo "✓ kata/sandbox-templates image is an unmistakable placeholder"
         else
           echo "✗ kata/sandbox-templates committed a concrete coder image"; fail=1
+        fi
+        # Same two checks for the Nitro coder template, which task nitro fills in
+        # the same way.
+        if helm template t nitro-sandbox/sandbox-templates \
+             --set coderTemplate.image=example.dkr.ecr.us-west-2.amazonaws.com/x:1 >/dev/null 2>&1; then
+          echo "✓ nitro-sandbox/sandbox-templates renders"
+        else
+          echo "✗ nitro-sandbox/sandbox-templates failed to render"; fail=1
+        fi
+        if grep -q 'image: SET-BY-TASK-NITRO' nitro-sandbox/sandbox-templates/values.yaml; then
+          echo "✓ nitro-sandbox/sandbox-templates image is an unmistakable placeholder"
+        else
+          echo "✗ nitro-sandbox/sandbox-templates committed a concrete coder image"; fail=1
         fi
         exit $fail
 

@@ -8,8 +8,8 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 dependencies:
-  # Everything both substrates share (sensor, RBAC, iterate/merge templates,
-  # scripts, holdout) lives in one place so the two examples cannot drift.
+  # Everything the substrates share (sensor, RBAC, iterate/merge templates,
+  # scripts, holdout) lives in one place so the examples cannot drift.
   - name: dark-factory-shared
     version: 0.1.0
     repository: "file://../_shared"

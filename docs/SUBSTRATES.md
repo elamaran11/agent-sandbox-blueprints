@@ -1,7 +1,9 @@
-# Dark Factory — Substrate Benchmark: Kata micro-VM vs Lambda MicroVM
+# Dark Factory substrates: Kata micro-VM, Lambda MicroVM, Nitro Sandbox
 
-A side-by-side comparison of the two sandbox substrates that run the autonomous coder,
-measured on identical issues run through the same cluster.
+A side-by-side comparison of the sandbox substrates that run the autonomous coder. Kata
+and Lambda MicroVM were benchmarked on identical issues run through the same cluster.
+Nitro Sandbox is a private preview and has [its own section](#nitro-sandbox-private-preview)
+with substrate-level measurements.
 
 - **Kata substrate — Kata micro-VM** (mature, default): the agent runs in a hardware-isolated Kata
   pod on a self-managed nested-virt EKS node group.
@@ -75,11 +77,12 @@ for the entire multi-minute review window — that idle time is free on Lambda, 
 
 ---
 
-## DAG — two SEPARATE WorkflowTemplates (one per substrate)
+## DAG: one WorkflowTemplate per substrate
 
 The substrates run **different Argo WorkflowTemplates**, so each graph is clean and Kata's certified
-pipeline is never touched by Lambda MicroVM substrate changes. The Argo Events sensor routes by label:
-`dark-factory` → `df-run` (Kata), `darkfactory-lambda` → `df-run-lambda` (Lambda MicroVM substrate).
+pipeline is never touched by Lambda MicroVM or Nitro Sandbox changes. The Argo Events sensor routes by label:
+`dark-factory` → `df-run` (Kata), `darkfactory-lambda` → `df-run-lambda` (Lambda MicroVM substrate),
+`darkfactory-nitro` → `df-run-nitro` (Nitro Sandbox).
 
 **Kata — `df-run` (certified, byte-identical to the mature pipeline):**
 ```
@@ -166,13 +169,58 @@ WorkflowTemplates** (`df-run` vs `df-run-lambda`): Lambda MicroVM substrate's pl
 
 ---
 
+## Nitro Sandbox (private preview)
+
+The third substrate runs the Kata pipeline unchanged except for the claim:
+`darkfactory-nitro` → `df-run-nitro`, which claims from `coder-warmpool-nitro`. Each coder
+pod boots its own microVM under the `isolated-sandbox` RuntimeClass (EKS Pod Isolation),
+on an EKS Auto Mode node that Auto Mode launches when a sandbox pod is pending.
+
+It has not been benchmarked issue to PR the way the two runs above were. These are the
+substrate's own timings, measured on 2026-10-05 (EKS 1.36 Auto Mode, `m7i.xlarge`,
+agent-sandbox v0.5.4):
+
+| Phase | Time |
+| --- | --- |
+| Pending sandbox pod → Auto Mode node → pod `Running` (small image, no node up) | ~46 s |
+| Coder spare on a node without the image (1 GB image: pull + first-boot conversion) | ~27 s |
+| Claimed coder, node already holding the image: scheduled → container started | ~4 s |
+| `Sandbox` suspend → pod gone / resume → `Ready` | ~2.3 s / ~10.3 s |
+| Warm claim / cold claim (no env injected, image cached) | ~2.4 to 3.3 s / ~8.5 s |
+
+| | Kata | Nitro Sandbox |
+| --- | --- | --- |
+| **Isolation** | Kata micro-VM on nested virtualization | Own microVM per pod, Nitro Enclaves |
+| **Node setup** | Karpenter nested-virt pools + kata-deploy + readiness taint | One Auto Mode NodePool; nothing installed on the node |
+| **LLM path** | Bifrost (ClusterIP) | Bifrost (ClusterIP), allowed by an explicit egress list on the template |
+| **Fix round** | fresh pod each round | fresh pod each round |
+| **Logs** | `kubectl logs` | `kubectl logs` |
+| **Density** | node pool sizing | 20 sandbox slots per `m7i.xlarge`, all usable; three coders at `cpu: "1"` |
+| **Maturity** | production-ready | private preview |
+
+### Gotchas the Nitro substrate needed (that Kata does not)
+
+| # | Gotcha | Fix |
+| --- | --- | --- |
+| 1 | Pod isolation nodes are Auto Mode nodes; the blueprint cluster is not Auto Mode | `enable_auto_mode = true` in Terraform (Auto Mode compute, block storage and load balancing, no built-in node pools) |
+| 2 | A custom Auto Mode NodeClass's nodes never join without an access entry | `auto-mode.tf`: EC2 access entry with `AmazonEKSAutoNodePolicy` for the node role |
+| 3 | The microVM is sized from requests; limits above them are unreachable | coder requests `cpu: "1"`, `memory: 4Gi`, memory limit equal; `ephemeral-storage` limit `10Gi` sizes the overlay holding `/workspace` |
+| 4 | 20 sandbox slots per `m7i.xlarge`, all of them real. CPU limits above requests are unreachable (requests size the microVM) | the coder requests `cpu: "1"`, which is also the limit, so three coders fit the node |
+| 5 | agent-sandbox's default template NetworkPolicy allows public internet only and swaps DNS to `8.8.8.8`. This is not Nitro-specific: it bites the Kata coder too once NetworkPolicy is enforced ([ROADMAP #10](ROADMAP.md#10-agent-sandboxs-default-networkpolicy-blocks-bifrost-where-policy-is-enforced)) | the template sets `networkPolicy`: cluster DNS, Bifrost, public internet |
+| 6 | `confidential-sandbox` refuses any pod without a Cedar policy envelope | the coder uses `isolated-sandbox` |
+| 7 | The cluster's default `ebs-gp3` cannot attach on Auto Mode nodes | sandbox PVCs use an `ebs.csi.eks.amazonaws.com` class (`samples/05`) |
+| 8 | Auto Mode and this blueprint's self-managed Karpenter share `nodepools.karpenter.sh` and `nodeclaims.karpenter.sh` for as long as both run. AWS's migration guide says not to mutate those CRDs while both coexist | the self-managed Karpenter Application is `prune: false` already; the pattern treats both as read-only after `task up`. A side-by-side Kata + Nitro run on one cluster has not been tested |
+
 ## When to choose which
 
 - **Kata (today):** production-ready, mature, standard `kubectl`/IDE access, in-cluster networking.
   Choose it now for reliability. Cost: you run + pay for a nested-virt node pool continuously.
+- **Nitro Sandbox (when it launches):** the same `kubectl`-native model as Kata, without nested
+  virtualization, kata-deploy or a node image to manage. Choose it once your account has the
+  feature, and plan capacity in microVMs per node rather than in slots.
 - **Lambda MicroVM (strategic):** serverless, suspend-to-zero per idle session, no node pool —
   the model that scales economically to thousands of sessions. Choose it as it reaches GA. Cost
   today: pre-GA control-plane maturity + the plumbing above.
 
-Both share the **same coder, same pipeline, same review gates, same UX** — so migrating between
-substrates is a label change, invisible to the developer/issue author.
+All three share the **same coder, same pipeline, same review gates, same UX**, so migrating between
+substrates is a label change, invisible to the developer or issue author.

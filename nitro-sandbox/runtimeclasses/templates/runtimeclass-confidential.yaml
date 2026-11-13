@@ -1,0 +1,28 @@
+# confidential-sandbox: the same microVM as isolated-sandbox, but the guest
+# formats its writable overlay as LUKS (dm-crypt over dm-integrity, as the
+# preview's earlier testing showed), so what the workload writes to its root
+# filesystem and emptyDirs is encrypted at rest.
+#
+# It is default-deny. A pod without a Cedar policy envelope in its
+# sandbox.amazonaws.com/policy annotation never starts: it sits in
+# ContainerCreating, and its events repeat FailedCreatePodSandBox with
+# "a policy is required in confidential mode (default-deny is enforced)".
+# Measured 2026-10-05 on Auto Mode. The envelope comes from the preview's
+# genpolicy tool, which this blueprint does not ship.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: confidential-sandbox
+handler: confidential-sandbox
+overhead:
+  podFixed:
+    eks.amazonaws.com/nitro-sandbox: "1"
+    memory: 256Mi
+scheduling:
+  nodeSelector:
+    eks.amazonaws.com/nitro-sandbox: "true"
+  tolerations:
+    - key: nitro-sandbox
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

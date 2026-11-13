@@ -118,6 +118,7 @@ async function main() {
     const origIssue = await gh("GET", `/repos/${REPO}/issues/${issueNumber}`);
     const il = (origIssue.labels || []).map((l) => (typeof l === "string" ? l : l.name));
     if (il.includes("darkfactory-lambda")) triggerLabel = "darkfactory-lambda";
+    else if (il.includes("darkfactory-nitro")) triggerLabel = "darkfactory-nitro";
   } catch (e) { console.log(`[df-iterate] could not read issue #${issueNumber} labels (${e.message}) — defaulting Kata`); }
   console.log(`[df-iterate] substrate trigger-label=${triggerLabel}`);
   const cur = labels.filter((l) => l.startsWith(ITER_LABEL_PREFIX)).map((l) => parseInt(l.slice(ITER_LABEL_PREFIX.length), 10)).filter((n) => !isNaN(n));
@@ -134,11 +135,11 @@ async function main() {
 
   console.log(`[df-iterate] revision ${next}/${MAX_ITERATIONS} for issue #${issueNumber} (PR #${PR})`);
   // Substrate-routed template: Lambda fix rounds run the MicroVM-native df-run-lambda
-  // (resumes the SAME suspended VM); Kata fix rounds run the certified df-run. Keyed on
-  // the originating issue's label (resolved above as triggerLabel).
-  const isLambda = triggerLabel === "darkfactory-lambda";
-  const wfTemplate = isLambda ? "df-run-lambda" : "df-run";
-  const wfName = isLambda ? `df-run-lambda-${issueNumber}-i${next}` : `df-run-${issueNumber}-i${next}`;
+  // (resumes the SAME suspended VM), Nitro Sandbox fix rounds run df-run-nitro (claims
+  // from the Nitro pool), and Kata fix rounds run the certified df-run. Keyed on the
+  // originating issue's label (resolved above as triggerLabel).
+  const wfTemplate = { "darkfactory-lambda": "df-run-lambda", "darkfactory-nitro": "df-run-nitro" }[triggerLabel] || "df-run";
+  const wfName = `${wfTemplate}-${issueNumber}-i${next}`;
   console.log(`[df-iterate] substrate=${triggerLabel} → template=${wfTemplate}`);
   const wf = {
     apiVersion: "argoproj.io/v1alpha1", kind: "Workflow",

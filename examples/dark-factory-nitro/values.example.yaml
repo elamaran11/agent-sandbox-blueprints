@@ -1,0 +1,67 @@
+# Copy to values.yaml (gitignored) and edit. These are the chart's REAL keys:
+# github.repo / agent.image are not, and no template reads them.
+#
+# Same keys as the Kata example. The substrate is chosen by the issue label
+# (darkfactory-nitro), not by anything in this file.
+
+trigger:
+  argoEvents:
+    # Repos whose issues fire the factory.
+    repositories:
+      - owner: your-org
+        names:
+          - your-sandbox-repo
+    # Public URL GitHub posts webhooks to. Leave "" and submit Workflows directly
+    # if you have no load balancer, see docs/MANUAL-STEPS.md §2.
+    webhookUrl: ""
+    # LoadBalancer needs the AWS Load Balancer Controller on EKS 1.36+.
+    serviceType: LoadBalancer
+
+# The same keys again at SUBCHART scope. The EventSource and the holdout
+# ConfigMaps render inside the dark-factory-shared subchart, and a parent-scope
+# value never reaches a subchart: without this block they would keep
+# defaults.yaml's repo, and the holdout gate would mount a ConfigMap that was
+# never rendered. Keep the two blocks identical.
+dark-factory-shared:
+  trigger:
+    argoEvents:
+      repositories:
+        - owner: your-org
+          names:
+            - your-sandbox-repo
+      webhookUrl: ""
+      serviceType: LoadBalancer
+
+# Which agentic CLI runs in the sandbox. Both are baked into the coder image.
+coder:
+  engine: claude          # claude | kiro
+
+# ── Review agents ────────────────────────────────────────────────────────────
+# OFF by default: limited preview, and the Security Agent needs IAM you create.
+# Full setup steps: docs/MANUAL-STEPS.md §5.
+securityAgent:
+  enabled: false
+  # Required when enabled. All account-specific, so keep them in values.yaml only:
+  # irsaRoleArn: arn:aws:iam::<acct>:role/<irsa-role>
+  # serviceRoleArn: arn:aws:iam::<acct>:role/service-role/<service-role>
+  # diffBucket: <diff-bucket>
+  # idcInstanceArn: arn:aws:sso:::instance/ssoins-...
+  blockLevel: medium      # findings at/above this severity block the merge gate
+
+devopsAgent:
+  enabled: false
+  gate: check             # wait for the DevOps Agent App's check-run
+
+# ── Gates ────────────────────────────────────────────────────────────────────
+holdout:
+  enabled: true
+  threshold: 0.90         # fraction of hidden scenarios that must pass
+
+deployTest:
+  # OFF: this blueprint ships no deploy-test image and terraform creates no repo
+  # for one. Build your own, set .image, then enable.
+  enabled: false
+
+iterate:
+  enabled: true
+  maxIterations: 3

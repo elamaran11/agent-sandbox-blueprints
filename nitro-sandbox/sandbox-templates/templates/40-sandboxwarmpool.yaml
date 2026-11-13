@@ -1,0 +1,19 @@
+{{- if .Values.warmPool.enabled }}
+{{- /*
+Native SandboxWarmPool. The operator keeps `replicas` idle sandboxes booted
+from the template above. Each one is a running microVM that holds its CPU and
+memory requests and one eks.amazonaws.com/nitro-sandbox slot for as long as it
+waits, so keep the pool small: at cpu "1" a node fits three coders in total.
+*/ -}}
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: {{ .Values.warmPool.name | default "coder-warmpool-nitro" }}
+  namespace: {{ include "agent-sandbox.namespace" . }}
+  labels:
+    {{- include "agent-sandbox.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.warmPool.targetIdle }}
+  sandboxTemplateRef:
+    name: {{ .Values.warmPool.templateName }}
+{{- end }}

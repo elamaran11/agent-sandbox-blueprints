@@ -76,6 +76,8 @@ function startCoder(payload) {
     DF_BRANCH: d.branch || (d.issueNumber ? `df/issue-${d.issueNumber}` : ""),
     DF_BASE_BRANCH: d.baseBranch || "main",
     DF_ISSUE_TITLE: d.issueTitle || "",
+    // Named in the coder's completion comment (entrypoint.js defaults to Kata).
+    DF_SUBSTRATE: "Lambda MicroVM",
   };
   // Fix round (df-iterate): the bridge folds the human's change request into the
   // payload as iterateNoteB64. Without this, a Lambda fix round re-runs the coder

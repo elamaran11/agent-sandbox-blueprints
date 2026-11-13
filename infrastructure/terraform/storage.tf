@@ -27,6 +27,11 @@
 # default StorageClass after `task kata`, and `task up` on its own produced a
 # cluster where anything with a PVC hung. Storage is a platform concern, not a
 # property of one optional substrate.
+#
+# One exception to "NOT Auto Mode": enable_auto_mode=true (Nitro Sandbox). This
+# class stays the default, but the add-on's node plugin skips Auto Mode nodes, so a
+# PVC on a Nitro sandbox node needs an ebs.csi.eks.amazonaws.com class instead
+# (nitro-sandbox/samples/05-suspend-resume/storageclass.yaml).
 resource "kubernetes_storage_class" "ebs_gp3" {
   metadata {
     name = "ebs-gp3"

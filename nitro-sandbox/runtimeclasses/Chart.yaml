@@ -1,0 +1,9 @@
+apiVersion: v2
+name: nitro-sandbox-runtimeclasses
+description: >-
+  The two EKS Pod Isolation RuntimeClasses: isolated-sandbox (every pod boots its
+  own microVM on a Nitro-isolated slice of the node) and confidential-sandbox (the
+  same, with an encrypted writable overlay). Both charge the per-pod overhead the
+  scheduler needs and tolerate the nitro-sandbox NodePool taint.
+type: application
+version: 0.1.0

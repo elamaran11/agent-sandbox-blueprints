@@ -37,6 +37,13 @@ output "karpenter_node_role" {
   value       = aws_iam_role.karpenter_node.name
 }
 
+# Empty, not null, when Auto Mode is off: `terraform output -raw` errors on a null
+# output, and `task kata` / `task lambda` read every output through the same step.
+output "auto_mode_node_role" {
+  description = "IAM role name EKS Auto Mode attaches to Nitro Sandbox nodes (nitro-sandbox/ nodepools need this). Empty unless enable_auto_mode=true."
+  value       = var.enable_auto_mode ? module.eks.node_iam_role_name : ""
+}
+
 output "gitops_repo_url" {
   description = "Git repo ArgoCD reads manifests from"
   value       = var.gitops_repo_url
@@ -73,6 +80,7 @@ output "next_steps" {
     Platform is ready. Next:
       task kata          # add the Kata micro-VM substrate (clh + qemu + fc)
       task lambda        # add the AWS Lambda MicroVM substrate
+      task nitro         # add the Nitro Sandbox substrate (needs enable_auto_mode=true)
       task status        # watch ArgoCD applications reconcile
   EOT
 }

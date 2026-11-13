@@ -37,16 +37,33 @@ Symptom → cause → fix, for the failures that actually happen. Ordered by lay
 | KRO graph stuck `Inactive` (cache sync timeout) | Managed KRO only watches the **`kro.run`** API group | The RGD's `schema.group` must be `kro.run` |
 | suspend/resume flapping until the VM dies | Two owners pointing at one VM with conflicting intent | One VM per unit of work; key the CR name to the issue |
 
+## Nitro Sandbox
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `task nitro` stops: no EKS Auto Mode node role | Terraform ran without Auto Mode | `enable_auto_mode = true` in `terraform.tfvars`, then `task tf:apply` |
+| Sandbox pod `Pending`, Auto Mode launches nothing | The `nitro-sandbox` NodeClass is not Ready, or the account is not enabled for the preview | `kubectl get nodeclass,nodepool nitro-sandbox`; a capable node carries `eks.amazonaws.com/nitro-sandbox=true` and a non-zero `eks.amazonaws.com/nitro-sandbox` allocatable |
+| Pod rejected: `RuntimeClass "isolated_sandbox" not found` | The preview guide spells the names with underscores | Use hyphens: `isolated-sandbox`, `confidential-sandbox` |
+| Pod `Pending` with `Insufficient eks.amazonaws.com/nitro-sandbox` | All 20 sandbox slots on the node are in use | Auto Mode adds a node unless the pod is pinned to one; delete idle sandboxes |
+| Pod in `ContainerCreating` for minutes, events repeat `FailedCreatePodSandBox` with `No space left on device` | An older preview node image that booted fewer microVMs than it advertised | Replace the node so it comes up on a current image; until then delete idle sandboxes |
+| `confidential-sandbox` pod never starts: `a policy is required in confidential mode` | That RuntimeClass is default-deny without a Cedar policy envelope | Use `isolated-sandbox`, or attach a `sandbox.amazonaws.com/policy` envelope |
+| Coder cannot reach Bifrost; cluster names do not resolve | agent-sandbox's default template NetworkPolicy allows public internet only and swaps DNS to `8.8.8.8` | Set `networkPolicy` on the SandboxTemplate; the Nitro coder template lists cluster DNS, Bifrost and the internet |
+| PVC on a sandbox node never attaches | `ebs-gp3` uses the EBS CSI add-on, whose node plugin skips Auto Mode nodes | Use a class on `ebs.csi.eks.amazonaws.com` (`nitro-sandbox/samples/05-suspend-resume/storageclass.yaml`) |
+| `deny-all-egress` annotation does nothing | The annotation was renamed and the old key is ignored | `sandbox.amazonaws.com/network-isolated: "true"` |
+| DNS lookups time out under load | The guest is capped at 100 DNS packets per second | Fewer parallel lookups; the cap has no override |
+| Guest and node report the same kernel | Today's Auto Mode AMI runs the same kernel in both | Check `/sys/class/dmi/id/product_name` (`m7i.enclave` or `m8i.enclave`) and `nproc` instead |
+
 ## Pipeline
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `task demo-*` fails on `dark-factory-webhook` with `spec.loadBalancerClass ... may not change once set` | The Service was created before the AWS Load Balancer Controller was installed, so it has no class, and the class cannot be added in place | `kubectl delete svc dark-factory-webhook -n argo-events`, re-run `task demo-*`, then point the GitHub webhook at the new NLB address |
 | Webhook arrives, no Workflow created | Sensor has stale JetStream consumers after an EventBus restart | Delete the stale consumers and restart the sensor |
 | Your "fix findings" comment does nothing | The pipeline posts as the token owner and ignores its own voice | Comment from a **different** GitHub account |
 | Merge refused despite green checks | Stale findings from an earlier commit being counted | Judge by commit statuses on the **current head**; inline comments carry forward |
 | Agent re-ran but committed nothing | The review note never reached the sandbox | The note must ride in the sandbox's injected env / run payload |
 | Reviews restart on every push | Each new commit re-triggers the external agents (8–15 min each) | Expected; batch fixes into one commit where you can |
-| Runs pile up and stall | Concurrency is bounded by the warm pool; extra runs wait for a free sandbox | Raise `agent.warmPoolSize`, or accept the queue |
+| Runs pile up and stall | Concurrency is bounded by node capacity: coder claims inject env, so they skip the warm pool ([ROADMAP #9](ROADMAP.md#9-a-claim-that-injects-env-never-uses-the-warm-pool)) and wait for room on a node | Raise the NodePool `cpuLimit` (`kata/nodepools/values.yaml`, `nitro-sandbox/nodepools/values.yaml`), or accept the queue |
 
 ## Cost / leak checks
 
@@ -57,6 +74,7 @@ aws lambda-microvms list-microvms --region us-west-2 \
 
 kubectl get sandboxclaims,sandboxes -A      # orphaned sandboxes hold Kata nodes up
 kubectl get nodes -l kata-enabled=true      # should scale to zero when idle
+kubectl get nodes -l eks.amazonaws.com/nitro-sandbox=true   # Nitro: empty ~10 min after the last sandbox (unless targetIdle > 0)
 ```
 
 If `task down` fails partway, re-run it — it deletes sandboxes and `Microvm` CRs before
