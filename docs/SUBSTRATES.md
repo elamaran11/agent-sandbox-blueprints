@@ -209,7 +209,7 @@ agent-sandbox v0.5.4):
 | 5 | agent-sandbox's default template NetworkPolicy allows public internet only and swaps DNS to `8.8.8.8`. This is not Nitro-specific: it bites the Kata coder too once NetworkPolicy is enforced ([ROADMAP #10](ROADMAP.md#10-agent-sandboxs-default-networkpolicy-blocks-bifrost-where-policy-is-enforced)) | the template sets `networkPolicy`: cluster DNS, Bifrost, public internet |
 | 6 | `confidential-sandbox` refuses any pod without a Cedar policy envelope | the coder uses `isolated-sandbox` |
 | 7 | The cluster's default `ebs-gp3` cannot attach on Auto Mode nodes | sandbox PVCs use an `ebs.csi.eks.amazonaws.com` class (`samples/05`) |
-| 8 | Auto Mode and this blueprint's self-managed Karpenter share `nodepools.karpenter.sh` and `nodeclaims.karpenter.sh` for as long as both run. AWS's migration guide says not to mutate those CRDs while both coexist | the self-managed Karpenter Application is `prune: false` already; the pattern treats both as read-only after `task up`. A side-by-side Kata + Nitro run on one cluster has not been tested |
+| 8 | Auto Mode and this blueprint's self-managed Karpenter share `nodepools.karpenter.sh` and `nodeclaims.karpenter.sh` for as long as both run. AWS's migration guide says not to mutate those CRDs while both coexist | Nothing makes them read-only: the `karpenter` Application (`05-karpenter.yaml`) runs with `selfHeal` and `ServerSideApply`, so bumping `karpenter.chart.version` rewrites both CRDs while Auto Mode is using them. On a cluster with `enable_auto_mode = true`, leave that version alone, or diff the new chart's CRDs against the live ones before you bump it. A side-by-side Kata + Nitro run on one cluster has not been tested |
 
 ## When to choose which
 
