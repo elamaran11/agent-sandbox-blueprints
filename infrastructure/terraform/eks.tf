@@ -1,3 +1,8 @@
+locals {
+  # True only for a cluster born with Auto Mode on, which has no default add-ons.
+  addons_before_compute = var.enable_auto_mode && !var.cluster_created_without_auto_mode
+}
+
 module "eks" {
   source = "terraform-aws-modules/eks/aws"
   # >= 20.31 for cluster_compute_config (EKS Auto Mode).
@@ -58,8 +63,14 @@ module "eks" {
   }
 
   cluster_addons = {
+    # before_compute: a cluster CREATED with Auto Mode on gets no default
+    # vpc-cni or kube-proxy (bootstrap_self_managed_addons is false), so without
+    # these two in place first the system node group never goes Ready and fails
+    # to create. Only set for that case: moving an add-on across the module's
+    # before/after split re-creates it, which an existing cluster must not see.
     kube-proxy = {
       most_recent                 = true
+      before_compute              = local.addons_before_compute
       resolve_conflicts_on_create = "OVERWRITE"
       resolve_conflicts_on_update = "OVERWRITE"
     }
@@ -70,6 +81,7 @@ module "eks" {
     }
     vpc-cni = {
       most_recent                 = true
+      before_compute              = local.addons_before_compute
       resolve_conflicts_on_create = "OVERWRITE"
       resolve_conflicts_on_update = "OVERWRITE"
     }
