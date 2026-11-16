@@ -46,6 +46,8 @@ gitops_target_revision = "main"
 # enabled for the EKS Pod Isolation preview. Off by default; Kata and Lambda
 # MicroVM do not use it.
 # enable_auto_mode = true
+# Only when turning it on for a cluster that already exists without it:
+# cluster_created_without_auto_mode = true
 
 # Extra IAM roles granted cluster-admin (the identity running terraform always is).
 # admin_role_arns = ["arn:aws:iam::111122223333:role/YourAdminRole"]

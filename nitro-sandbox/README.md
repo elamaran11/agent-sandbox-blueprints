@@ -26,8 +26,9 @@ off by default. Turn it on in `infrastructure/terraform/terraform.tfvars`:
 enable_auto_mode = true
 ```
 
-On a cluster you already run, `task tf:plan` first: `module.eks.aws_eks_cluster.this[0]`
-must show as updated in place, never replaced. Then `task tf:apply`. This enables Auto
+On a cluster you already run, also set `cluster_created_without_auto_mode = true`, then
+`task tf:plan` first: `module.eks.aws_eks_cluster.this[0]` must show as updated in place,
+never replaced. Then `task tf:apply`. A new cluster needs neither. This enables Auto
 Mode compute, block storage and load balancing
 (EKS turns the three on together) next to the system node group and the Kata Karpenter
 pools. No built-in node pools are enabled, so nothing moves onto Auto Mode unless it asks

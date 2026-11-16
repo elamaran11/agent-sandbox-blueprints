@@ -22,11 +22,14 @@ module "eks" {
   # Services, so anything meant for the LBC must pin loadBalancerClass (the
   # webhook Service does).
   cluster_compute_config = var.enable_auto_mode ? { enabled = true } : {}
-  # Pinned to true while Auto Mode is on. The module otherwise defaults it to
-  # false for Auto Mode clusters, and changing it forces a NEW cluster: flipping
-  # enable_auto_mode on an existing deployment would destroy and recreate the
-  # cluster. Left null when Auto Mode is off, so nothing changes for anyone else.
-  bootstrap_self_managed_addons = var.enable_auto_mode ? true : null
+  # Changing this forces a NEW cluster, and the right value depends on how the
+  # cluster was born:
+  #   * created with Auto Mode on: EKS's CreateCluster rejects true ("must be set
+  #     to false"), so it is false.
+  #   * created before Auto Mode was turned on: EKS made it true, so it stays
+  #     true and the flip is an in-place update (cluster_created_without_auto_mode).
+  # Left null when Auto Mode is off, so nothing changes for anyone else.
+  bootstrap_self_managed_addons = var.enable_auto_mode ? var.cluster_created_without_auto_mode : null
 
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
