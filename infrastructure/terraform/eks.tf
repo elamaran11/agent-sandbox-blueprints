@@ -1,11 +1,40 @@
+locals {
+  # True only for a cluster born with Auto Mode on, which has no default add-ons.
+  addons_before_compute = var.enable_auto_mode && !var.cluster_created_without_auto_mode
+}
+
 module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 20.0"
+  source = "terraform-aws-modules/eks/aws"
+  # >= 20.31 for cluster_compute_config (EKS Auto Mode).
+  version = "~> 20.31"
 
   cluster_name    = local.cluster_name
   cluster_version = var.cluster_version
 
   cluster_endpoint_public_access = var.cluster_endpoint_public_access
+
+  # EKS Auto Mode, for the Nitro Sandbox substrate only (enable_auto_mode). It
+  # runs NEXT TO the system node group and the self-managed Karpenter below:
+  # nitro-sandbox/nodepools defines the only Auto Mode NodePool, so no built-in
+  # node pools are enabled and nothing else moves onto Auto Mode nodes.
+  # The module also attaches the extra cluster-role policies Auto Mode needs and
+  # creates the Auto Mode node role (see auto-mode.tf for its access entry). EKS
+  # turns Auto Mode's block storage (ebs.csi.eks.amazonaws.com) and load balancing
+  # (eks.amazonaws.com/nlb and /alb classes) on with compute. They run beside the
+  # EBS CSI add-on and the AWS Load Balancer Controller. Each side manages the
+  # objects carrying its provisioner or class, but Auto Mode also registers
+  # eks.amazonaws.com/nlb as the cluster default for CLASSLESS LoadBalancer
+  # Services, so anything meant for the LBC must pin loadBalancerClass (the
+  # webhook Service does).
+  cluster_compute_config = var.enable_auto_mode ? { enabled = true } : {}
+  # Changing this forces a NEW cluster, and the right value depends on how the
+  # cluster was born:
+  #   * created with Auto Mode on: EKS's CreateCluster rejects true ("must be set
+  #     to false"), so it is false.
+  #   * created before Auto Mode was turned on: EKS made it true, so it stays
+  #     true and the flip is an in-place update (cluster_created_without_auto_mode).
+  # Left null when Auto Mode is off, so nothing changes for anyone else.
+  bootstrap_self_managed_addons = var.enable_auto_mode ? var.cluster_created_without_auto_mode : null
 
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
@@ -18,9 +47,10 @@ module "eks" {
   # nested-virt nodes (see kata/), and Lambda MicroVM sandboxes do not run on
   # cluster nodes at all — they are remote AWS-managed VMs.
   #
-  # Not using EKS Auto Mode: Kata needs a nested-virtualization launch config
-  # and control over containerd (kata-deploy owns it), which Auto Mode and
-  # Bottlerocket do not provide.
+  # Not using EKS Auto Mode for this group: Kata needs a nested-virtualization
+  # launch config and control over containerd (kata-deploy owns it), which Auto
+  # Mode and Bottlerocket do not provide. Auto Mode is only switched on, for
+  # Nitro Sandbox nodes, by enable_auto_mode above.
   eks_managed_node_groups = {
     system = {
       instance_types = var.system_instance_types
@@ -33,8 +63,14 @@ module "eks" {
   }
 
   cluster_addons = {
+    # before_compute: a cluster CREATED with Auto Mode on gets no default
+    # vpc-cni or kube-proxy (bootstrap_self_managed_addons is false), so without
+    # these two in place first the system node group never goes Ready and fails
+    # to create. Only set for that case: moving an add-on across the module's
+    # before/after split re-creates it, which an existing cluster must not see.
     kube-proxy = {
       most_recent                 = true
+      before_compute              = local.addons_before_compute
       resolve_conflicts_on_create = "OVERWRITE"
       resolve_conflicts_on_update = "OVERWRITE"
     }
@@ -45,6 +81,7 @@ module "eks" {
     }
     vpc-cni = {
       most_recent                 = true
+      before_compute              = local.addons_before_compute
       resolve_conflicts_on_create = "OVERWRITE"
       resolve_conflicts_on_update = "OVERWRITE"
     }

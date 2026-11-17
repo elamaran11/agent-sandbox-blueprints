@@ -1,0 +1,2 @@
+# No values needed. The chart only contains the two RuntimeClasses, and their
+# names, handlers and overhead must match what the node's runtime registers.

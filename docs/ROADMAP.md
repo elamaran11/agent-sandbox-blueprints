@@ -6,8 +6,8 @@ parts. It is not a hardened product. Here is what that honestly means.
 ## Known limitations
 
 ### No real backpressure
-Concurrency is bounded only by the sandbox warm-pool size (Kata) or AWS MicroVM quotas
-(Lambda). There is a per-issue mutex preventing duplicate runs of the same issue, but
+Concurrency is bounded only by node capacity (Kata and Nitro Sandbox NodePool limits; the
+coder claims skip the warm pool, see #9) or AWS MicroVM quotas (Lambda). There is a per-issue mutex preventing duplicate runs of the same issue, but
 nothing across issues: label 50 issues and you get 50 workflows, with the excess waiting
 for a free sandbox rather than being queued fairly.
 
@@ -41,6 +41,13 @@ Do not build a product on this substrate yet.
 restart with files intact**, the same model Coder and Gitpod use for Kubernetes
 workspaces. It is *not* VM hibernation; in-memory state is lost. Upstream Kata work on
 real save/restore is in progress. Only Lambda MicroVM offers warm suspend/resume here.
+
+### Nitro Sandbox is a private preview
+EKS Pod Isolation needs an account enabled for the preview, and its names, annotations
+and limits can change before launch: earlier preview images booted only one or four
+microVMs per node while advertising 20 slots, where today's boots all 20.
+`confidential-sandbox` needs a Cedar policy envelope from a preview-only tool, so the
+blueprint only uses `isolated-sandbox`.
 
 ### Firecracker cannot run this agent
 No `virtio-fs`, so no volume sharing, and the agent needs a workspace. `kata-fc` is
@@ -165,3 +172,25 @@ kubectl logs -n argo-events -l sensor-name=dark-factory --tail=200 \
 
 **Workaround (proven):** submit `df-iterate` directly with the finding as
 `comment-body`. That is how PR #149 went from DevOps-Agent-blocked to approved.
+
+### 9. A claim that injects env never uses the warm pool
+
+Every Dark Factory claim injects env (the issue number, the repo, the revision note), and
+agent-sandbox skips warm-pool adoption for any claim with env or volume claim templates:
+it boots a fresh sandbox from the template and leaves the spares idle. That is in the
+vendored v0.5.1 controller (`sandboxclaim_controller.go`: "If len(claim.Spec.Env) > 0 ...
+the controller immediately bypasses the warm pool queue") and was measured on v0.5.4,
+where the new Sandbox carries `agents.x-k8s.io/launch-type: cold`. It applies to Kata and
+Nitro alike. The spare still pays off by keeping a node up with the image cached, but a
+claim is a pod start, not an instant bind. Where these docs call a Kata claim "instant",
+read it as a pod start on a node that is already up.
+
+### 10. agent-sandbox's default NetworkPolicy blocks Bifrost where policy is enforced
+
+agent-sandbox attaches a NetworkPolicy to every SandboxTemplate. Without an explicit
+`networkPolicy` it allows the public internet only, which drops traffic to Bifrost's
+ClusterIP, and it rewrites the pod's DNS to `8.8.8.8` and `1.1.1.1`. This cluster's
+VPC CNI does not enforce NetworkPolicy by default, so nothing breaks today. Turn
+enforcement on and the Kata coder loses its LLM gateway. The Nitro coder template sets an
+explicit egress list (cluster DNS, Bifrost, public internet) and was verified with
+enforcement on; the Kata template would need the same before enforcement is enabled.

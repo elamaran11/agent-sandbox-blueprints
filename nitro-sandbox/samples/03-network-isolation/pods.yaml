@@ -1,0 +1,92 @@
+# The same pod three times. Only the annotation differs, so any difference in
+# what the guest can reach comes from the annotation.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-network
+  namespace: nitro-demo
+  annotations:
+    # The guest boots with no network device and no route. Accepts "true" or
+    # "false".
+    sandbox.amazonaws.com/network-isolated: "true"
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "interfaces:    $(ls /sys/class/net | tr '\n' ' ')"
+          if awk 'NR > 1 && $2 == "00000000" {found = 1} END {exit !found}' /proc/net/route; then
+            echo "default route: yes"
+          else
+            echo "default route: none"
+          fi
+          sleep 3600
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+---
+# Control. Without it a failed probe from no-network proves nothing: the cluster
+# might have no egress at all.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-network
+  namespace: nitro-demo
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "interfaces:    $(ls /sys/class/net | tr '\n' ' ')"
+          if awk 'NR > 1 && $2 == "00000000" {found = 1} END {exit !found}' /proc/net/route; then
+            echo "default route: yes"
+          else
+            echo "default route: none"
+          fi
+          sleep 3600
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi
+---
+# The trap. deny-all-egress is the annotation's old name. The runtime ignores it,
+# so this pod gets a normal network while its manifest says it has none.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: legacy-key
+  namespace: nitro-demo
+  annotations:
+    sandbox.amazonaws.com/deny-all-egress: "true"
+spec:
+  runtimeClassName: isolated-sandbox
+  terminationGracePeriodSeconds: 0
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "interfaces:    $(ls /sys/class/net | tr '\n' ' ')"
+          if awk 'NR > 1 && $2 == "00000000" {found = 1} END {exit !found}' /proc/net/route; then
+            echo "default route: yes"
+          else
+            echo "default route: none"
+          fi
+          sleep 3600
+      resources:
+        requests:
+          cpu: 250m
+          memory: 768Mi

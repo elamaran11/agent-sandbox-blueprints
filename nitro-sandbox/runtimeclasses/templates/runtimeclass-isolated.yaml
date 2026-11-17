@@ -1,0 +1,40 @@
+# isolated-sandbox: every pod boots in its own microVM, built from cores and
+# memory that Nitro Enclaves carves out of the node. Workloads opt in with
+# runtimeClassName: isolated-sandbox and nothing else.
+#
+# Spell it with a hyphen. The preview guide writes isolated_sandbox, but the
+# containerd handler on the node is isolated-sandbox, and a pod that names the
+# underscore version is rejected at create: RuntimeClass "isolated_sandbox" not
+# found. A capable node lists the handlers in
+# status.runtimeHandlers: confidential-sandbox, isolated-sandbox, runc.
+#
+# The preview has you apply these RuntimeClasses by hand. If your cluster
+# already has them, ArgoCD adopts the existing objects: handler is the only
+# immutable field and it is identical here, so adoption only adds the
+# toleration below.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: isolated-sandbox
+handler: isolated-sandbox
+# Admission copies this into every sandbox pod's spec.overhead. The
+# eks.amazonaws.com/nitro-sandbox extended resource is how the scheduler finds a
+# node that can boot a microVM at all; the memory is the VM's own footprint,
+# charged on top of the pod's requests. There is deliberately no cpu key.
+overhead:
+  podFixed:
+    eks.amazonaws.com/nitro-sandbox: "1"
+    memory: 256Mi
+# Auto Mode labels Nitro-sandbox-capable instances at registration, and its
+# Karpenter knows the label before the node exists, so a pending sandbox pod
+# provisions a capable node by itself. The toleration matches the taint on the
+# nitro-sandbox NodePool (nitro-sandbox/nodepools), which keeps ordinary pods
+# off sandbox nodes and lets the admission controller steer sandbox pods there.
+scheduling:
+  nodeSelector:
+    eks.amazonaws.com/nitro-sandbox: "true"
+  tolerations:
+    - key: nitro-sandbox
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

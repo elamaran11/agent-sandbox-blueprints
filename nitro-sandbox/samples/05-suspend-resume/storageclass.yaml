@@ -1,0 +1,16 @@
+# Auto Mode ships block storage but no StorageClass, and the cluster's default
+# class (ebs-gp3, the EBS CSI add-on) cannot attach to Auto Mode nodes: the
+# add-on's node plugin skips eks.amazonaws.com/compute-type=auto. Apply once.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nitro-ebs
+# Auto Mode's built-in EBS driver.
+provisioner: ebs.csi.eks.amazonaws.com
+# Wait for the pod, so the volume lands in the AZ of the node that uses it.
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  encrypted: "true"

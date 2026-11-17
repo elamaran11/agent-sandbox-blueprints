@@ -1,11 +1,11 @@
-# Dark Factory — Substrate Diagrams (Kata vs Lambda MicroVM)
+# Dark Factory substrate diagrams (Kata, Lambda MicroVM, Nitro Sandbox)
 
-Visual companion to [`SUBSTRATES.md`](./SUBSTRATE-BENCHMARK.md). All diagrams are
+Visual companion to [`SUBSTRATES.md`](./SUBSTRATES.md). All diagrams are
 Mermaid (render on GitHub).
 
 ---
 
-## 1. Label-routed to two SEPARATE WorkflowTemplates
+## 1. Label-routed to one WorkflowTemplate per substrate
 
 The Argo Events sensor routes each label to a **different** WorkflowTemplate, so Kata's certified
 pipeline is never touched by Lambda MicroVM substrate. Kata keeps its SandboxClaim; Lambda provisions a MicroVM directly.
@@ -15,13 +15,16 @@ flowchart TD
     ISSUE["GitHub issue labeled"] --> SENSOR["Argo Events sensor"]
     SENSOR -->|"dark-factory<br/>(issue-labeled-kata)"| DFRUN["df-run<br/>(certified Kata)"]
     SENSOR -->|"darkfactory-lambda<br/>(issue-labeled-lambda)"| DFRUNL["df-run-lambda<br/>(MicroVM-native)"]
+    SENSOR -->|"darkfactory-nitro<br/>(issue-labeled-nitro)"| DFRUNN["df-run-nitro<br/>(Nitro Sandbox)"]
     DFRUN --> KCLAIM["claim-sandbox<br/>(warm Kata pod)"] --> KCODE["drive-coder"]
+    DFRUNN --> NCLAIM["claim-sandbox<br/>(Nitro microVM)"] --> NCODE["drive-coder"]
     DFRUNL --> PROV["provision-microvm<br/>(create Microvm CR + POST /run)"] --> LCODE["drive-coder"]
     LCODE --> SUSP["suspend-microvm<br/>(scale-to-zero)"]
     KCODE --> GATES["holdout · detect→deploy-test<br/>devops-gate · security-agent"]
+    NCODE --> GATES
     SUSP --> GATES
     GATES --> STATUS["status (consolidated verdict)"]
-    STATUS --> EXIT["onExit: Kata deletes claim ·<br/>Lambda KEEPS suspended VM"]
+    STATUS --> EXIT["onExit: Kata and Nitro delete the claim ·<br/>Lambda KEEPS suspended VM"]
 ```
 
 The Kata graph has **zero MicroVM nodes**. `suspend-microvm` is explicit and lives only in
@@ -47,6 +50,30 @@ flowchart LR
 - Pre-warmed pod → **instant claim**.
 - Workspace is a **mounted writable volume**; logs are native; models via Bifrost (with Langfuse
   traces). Node pool runs continuously.
+
+---
+
+## 2b. Nitro Sandbox substrate
+
+```mermaid
+flowchart LR
+    CLAIM["SandboxClaim"] --> OP["agent-sandbox operator"]
+    OP --> POD["Pod in its own microVM<br/>(isolated-sandbox)<br/>on an Auto Mode node"]
+    POD --> ENT["entrypoint.js (baked)"]
+    ENT -->|models| BIF["Bifrost gateway<br/>(ClusterIP, on the<br/>template's egress list)"]
+    BIF --> BED["Bedrock"]
+    ENT -->|git/gh :443| GH["GitHub → PR"]
+    ENT -->|secrets| SEC["/etc/secrets<br/>(0400, read via fsGroup)"]
+    POD -.native logs.-> KL["kubectl logs"]
+    BIF -.traces.-> LF["Langfuse"]
+```
+
+- Same contract and pipeline as Kata. The claim injects env, so it boots a fresh microVM
+  from the template rather than adopting the idle spare; the spare keeps a node up with the
+  image converted, so that boot takes seconds.
+- No nested virtualization and nothing installed on the node: Auto Mode launches a
+  supported instance type when a sandbox pod is pending, and removes it 10 minutes after
+  it empties.
 
 ---
 
@@ -106,7 +133,7 @@ suspend/resume never flap between competing owners.
 
 ---
 
-## 5. End-to-end lifecycle (issue → PR → fix → merge) — both substrates
+## 5. End-to-end lifecycle (issue → PR → fix → merge), every substrate
 
 ```mermaid
 flowchart TD
@@ -120,15 +147,17 @@ flowchart TD
     APR --> MERGE["df-merge-teardown:<br/>merge PR + release/terminate sandbox"]
 ```
 
-The loop is identical for both substrates; `df-iterate` reads the originating issue's label to
-route the fix round back to the **same** substrate (Kata pool or Lambda pool).
+The loop is identical on every substrate; `df-iterate` reads the originating issue's label to
+route the fix round back to the **same** substrate (Kata pool, Nitro pool or Lambda pool).
 
 ---
 
 ## Legend / key facts
 
-- **Warm pool:** Kata = ready pods (instant); Lambda = bridge pods that RunMicrovm on claim.
-- **LLM:** Kata → Bifrost (traced in Langfuse); Lambda → Bedrock-direct (exec role).
-- **Workspace:** Kata → mounted volume; Lambda → `/tmp/workspace` (read-only rootfs).
-- **Logs:** Kata → `kubectl logs`; Lambda → `/logs` endpoint (+ build logs in CloudWatch).
-- **Teardown:** Kata → release claim; Lambda → delete `Microvm` CR → TerminateMicrovm.
+- **Warm pool:** Kata and Nitro = ready sandboxes, but a claim that injects env (every Dark
+  Factory claim) boots a fresh one from the template ([ROADMAP #9](ROADMAP.md#9-a-claim-that-injects-env-never-uses-the-warm-pool));
+  Lambda = bridge pods that RunMicrovm on claim.
+- **LLM:** Kata and Nitro → Bifrost (traced in Langfuse); Lambda → Bedrock-direct (exec role).
+- **Workspace:** Kata → mounted volume; Nitro → emptyDir inside the guest overlay; Lambda → `/tmp/workspace` (read-only rootfs).
+- **Logs:** Kata and Nitro → `kubectl logs`; Lambda → `/logs` endpoint (+ build logs in CloudWatch).
+- **Teardown:** Kata and Nitro → release claim; Lambda → delete `Microvm` CR → TerminateMicrovm.

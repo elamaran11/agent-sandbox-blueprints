@@ -158,6 +158,23 @@ variable "create_coder_ecr_repos" {
   default     = true
 }
 
+variable "enable_auto_mode" {
+  # ONE-WAY on an existing cluster. Off -> on updates the cluster in place
+  # (verified on a live cluster), but on -> off fails the plan: the provider
+  # keeps elastic_load_balancing in state while the module stops sending the
+  # compute/storage blocks, and the API wants all three set together. Only
+  # `terraform destroy` takes a cluster back off Auto Mode.
+  description = "Turn on EKS Auto Mode (compute, block storage and load balancing, which EKS enables together; no built-in node pools) next to the system node group. The Nitro Sandbox substrate (nitro-sandbox/) needs it: EKS Pod Isolation nodes are Auto Mode nodes. Your account must also be enabled for the EKS Pod Isolation preview. Kata and Lambda MicroVM do not need it."
+  type        = bool
+  default     = false
+}
+
+variable "cluster_created_without_auto_mode" {
+  description = "Set true only when turning enable_auto_mode on for a cluster that was first created with it off. EKS created that cluster with bootstrapSelfManagedAddons=true, and changing that setting replaces the cluster; true keeps the switch an in-place update. Leave false for a cluster created with Auto Mode on, since EKS rejects true at creation. Set it once and never flip it: changing it later replaces the cluster, and it also moves vpc-cni and kube-proxy across the module's before/after-compute split, which re-creates both add-ons. task tf:apply refuses any plan that would destroy the cluster."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource"
   type        = map(string)

@@ -1,0 +1,80 @@
+# One agent-sandbox Sandbox: a Pod in its own microVM, a per-sandbox volume, and a
+# headless Service. Suspend deletes the Pod and keeps the other two.
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
+metadata:
+  name: agent-alice
+  namespace: nitro-demo
+spec:
+  # Running or Suspended. Patch this to stop and start the microVM.
+  operatingMode: Running
+  # A headless Service, so status.serviceFQDN stays the same across resumes
+  # while the pod IP does not.
+  service: true
+  # One PVC per sandbox. Suspend does not delete it, which is what keeps state.
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        # One pod at a time, which is what a sandbox is.
+        accessModes: ["ReadWriteOncePod"]
+        storageClassName: nitro-ebs
+        resources:
+          requests:
+            storage: 1Gi
+  podTemplate:
+    metadata:
+      labels:
+        app: agent
+    spec:
+      runtimeClassName: isolated-sandbox
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 0
+      enableServiceLinks: false
+      securityContext:
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        runAsNonRoot: true
+      containers:
+        - name: agent
+          image: registry.k8s.io/e2e-test-images/agnhost:2.63.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              STATE=/state/resumes.log
+              echo "start at $(date -u +%FT%TZ) on ${NODE_NAME}" >> "$STATE"
+              # Flush before reporting. An earlier preview build lost unsynced
+              # writes to a volume with no error; it did not reproduce on
+              # 2026-10-05, and a sync costs nothing.
+              sync
+              echo "=== total starts: $(wc -l < "$STATE") ==="
+              cat "$STATE"
+              exec /agnhost netexec --http-port=8080
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          # The probe interval is part of resume latency: a 10 s period adds up
+          # to 10 s to every resume.
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+            limits:
+              memory: 1Gi
+              ephemeral-storage: 2Gi
+          volumeMounts:
+            - name: state
+              mountPath: /state

@@ -20,6 +20,8 @@ const MAX_ITERATIONS = parseInt(process.env.MAX_ITERATIONS || "3", 10);
 const ISSUE_NUMBER = process.env.ISSUE_NUMBER || "";
 const BASE_BRANCH = process.env.BASE_BRANCH || "main";
 const TRIGGER_LABEL = process.env.TRIGGER_LABEL || "dark-factory";
+// Where the coder ran, for the verdict comment. Same label map as fix-round routing.
+const SUBSTRATE = { "darkfactory-lambda": "Lambda MicroVM", "darkfactory-nitro": "Nitro-isolated microVM" }[TRIGGER_LABEL] || "Kata micro-VM";
 const ARGO_NAMESPACE = process.env.ARGO_NAMESPACE || "argo";
 const DEVOPS_CHECK = process.env.DEVOPS_CHECK || "";
 const SECURITY_CHECK = process.env.SECURITY_CHECK || "";
@@ -210,7 +212,7 @@ async function main() {
     // deploy-test only appears when the PR was deployable; omit the row otherwise.
     ...(by["dark-factory/deploy-test"] ? [row("deploy-test", "Deploy test")] : []),
     "",
-    `_Overall: **${overall}**. Autonomously implemented in a hardware-isolated Kata micro-VM; verification ran as independent hub-side steps (see the checks above). Awaiting human review._`,
+    `_Overall: **${overall}**. Autonomously implemented in a hardware-isolated ${SUBSTRATE}; verification ran as independent hub-side steps (see the checks above). Awaiting human review._`,
   ].join("\n");
 
   let body = pr.body || "";
@@ -356,11 +358,14 @@ async function maybeAutoFix(pr, ctx) {
     for (const l of cur) await api("DELETE", `/repos/${REPO}/issues/${pr.number}/labels/${encodeURIComponent(ITER + l)}`).catch(() => {});
     await api("POST", `/repos/${REPO}/issues/${pr.number}/labels`, { labels: [`${ITER}${next}`] }).catch(() => {});
 
+    // Same substrate routing as iterate.js: a fix round must claim from the pool the
+    // PR came from, not always the Kata one.
+    const wfTemplate = { "darkfactory-lambda": "df-run-lambda", "darkfactory-nitro": "df-run-nitro" }[TRIGGER_LABEL] || "df-run";
     const wf = {
       apiVersion: "argoproj.io/v1alpha1", kind: "Workflow",
-      metadata: { name: `df-run-${ISSUE_NUMBER}-fix${next}`, namespace: ARGO_NAMESPACE },
+      metadata: { name: `${wfTemplate}-${ISSUE_NUMBER}-fix${next}`, namespace: ARGO_NAMESPACE },
       spec: {
-        workflowTemplateRef: { name: "df-run" },
+        workflowTemplateRef: { name: wfTemplate },
         arguments: { parameters: [
           { name: "issue-id", value: `${ISSUE_NUMBER}` },
           { name: "issue-number", value: `${ISSUE_NUMBER}` },
@@ -379,7 +384,7 @@ async function maybeAutoFix(pr, ctx) {
       },
     };
     await submitWorkflow(wf);
-    console.log(`[df-run] AUTO-FIX submitted df-run-${ISSUE_NUMBER}-fix${next} (round ${next}/${MAX_ITERATIONS})`);
+    console.log(`[df-run] AUTO-FIX submitted ${wfTemplate}-${ISSUE_NUMBER}-fix${next} (round ${next}/${MAX_ITERATIONS})`);
     await api("POST", `/repos/${REPO}/issues/${pr.number}/comments`, { body: `<!-- dark-factory:autofix -->\n🏭 Dark Factory — **auto-fix round ${next}/${MAX_ITERATIONS}**: the coder is revising \`${BRANCH}\` to address the agents' findings above. A new verdict will be posted when the reviews re-run.` }).catch(() => {});
   } catch (e) {
     if (e && e.statusCode === 409) { console.log("[df-run] auto-fix already in flight (dedup) — no-op"); return; }

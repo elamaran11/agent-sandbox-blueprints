@@ -24,6 +24,9 @@ warmPool:
   # darkfactory-lambda label fires (coder runs in a MicroVM). Must match
   # agent-sandbox microvm.warmPool.name.
   lambdaName: coder-warmpool-microvm
+  # The Nitro Sandbox SandboxWarmPool df-run-nitro claims from (darkfactory-nitro
+  # label). Must match nitro-sandbox/sandbox-templates warmPool.name.
+  nitroName: coder-warmpool-nitro
   # Namespace of the pool / where claims + coder pods are created.
   namespace: agent-sandbox-system
 

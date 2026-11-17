@@ -54,19 +54,24 @@ jobs:
       - name: Every chart renders
         run: task lint:render
 
+      # lint:render repackages the subchart before rendering, so on its own it
+      # cannot notice a STALE vendored dark-factory-shared tgz. This can.
+      - name: Vendored subchart archives match _shared
+        run: task lint:deps
+
   # The two checks above are cheap and catch the mistakes that actually happened
   # while building this repo. This one guards the specific trap that the three
   # example values trees are duplicated by design (a subchart's values are not
-  # visible to parent templates), so an edit to one must be made to all three.
+  # visible to parent templates), so an edit to one must be made to all of them.
   values-in-sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: examples/_shared/values.yaml matches both defaults.yaml
+      - name: examples/_shared/values.yaml matches every defaults.yaml
         run: |
           set -euo pipefail
           fail=0
-          for ex in dark-factory-kata dark-factory-lambda; do
+          for ex in dark-factory-kata dark-factory-lambda dark-factory-nitro; do
             if diff -q examples/_shared/values.yaml "examples/$ex/defaults.yaml" >/dev/null; then
               echo "✓ examples/$ex/defaults.yaml in sync"
             else

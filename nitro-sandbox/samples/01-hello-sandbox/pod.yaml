@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-sandbox
+  namespace: nitro-demo
+spec:
+  # This one line is the whole difference. Everything else is an ordinary pod.
+  runtimeClassName: isolated-sandbox
+  # Delete fast. A terminating sandbox keeps its VM slot until it is gone.
+  terminationGracePeriodSeconds: 0
+  # Skips one block of injected env vars per Service in the namespace.
+  enableServiceLinks: false
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "machine: $(cat /sys/class/dmi/id/product_name)"
+          echo "vCPUs:   $(nproc)"
+          echo "memory:  $(awk '/MemTotal/ {printf "%d MiB", $2/1024}' /proc/meminfo)"
+          echo "kernel:  $(uname -r)"
+          echo "uptime:  $(cut -d' ' -f1 /proc/uptime)s"
+          sleep 3600
+      resources:
+        # The VM is sized from requests: 1 vCPU and 768Mi + 256Mi overhead.
+        requests:
+          cpu: "1"
+          memory: 768Mi

@@ -1,0 +1,5 @@
+apiVersion: v2
+name: nitro-sandbox-templates
+description: The Nitro Sandbox coder SandboxTemplate + SandboxWarmPool that df-run-nitro claims from
+type: application
+version: 0.1.0

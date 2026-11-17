@@ -1,0 +1,53 @@
+# A SandboxTemplate and a pool of two pre-booted spares built from it. The claim
+# is in claim.yaml.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: demo-tpl
+  namespace: nitro-demo
+spec:
+  # A claim that injects env never gets a spare: the controller boots a fresh
+  # sandbox instead. Disallowed makes such a claim fail loudly rather than quietly
+  # losing the warm start.
+  envVarsInjectionPolicy: Disallowed
+  volumeClaimTemplatesPolicy: Disallowed
+  podTemplate:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      runtimeClassName: isolated-sandbox
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 0
+      enableServiceLinks: false
+      containers:
+        - name: app
+          image: registry.k8s.io/e2e-test-images/agnhost:2.63.0
+          args: ["netexec", "--http-port=8080"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 60
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi
+            limits:
+              memory: 1Gi
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: demo-pool
+  namespace: nitro-demo
+spec:
+  # Each spare is a running microVM holding a VM slot and its memory for as long
+  # as it waits.
+  replicas: 2
+  sandboxTemplateRef:
+    name: demo-tpl

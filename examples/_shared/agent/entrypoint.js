@@ -32,6 +32,8 @@ const ISSUE = process.env.DF_ISSUE_NUMBER;
 const BRANCH = process.env.DF_BRANCH || `df/issue-${ISSUE}`;
 const BASE = process.env.DF_BASE_BRANCH || "main";
 const TITLE = process.env.DF_ISSUE_TITLE || `Dark Factory: issue #${ISSUE}`;
+// Named in the completion comment. Only df-run-nitro sets it today.
+const SUBSTRATE = process.env.DF_SUBSTRATE || "Kata micro-VM";
 // Agentic engine the VM runs. Both engines are first-class and selectable:
 //   claude → claude -p (Claude Code, default)   |   kiro → kiro run --headless
 // Accept the new CODER_ENGINE and the legacy CODER_PROFILE (claude-code|kiro);
@@ -499,7 +501,7 @@ async function main() {
     try { changed = sh("git", ["diff", "--name-status", `origin/${BASE}...HEAD`], { cwd: repoDir }).trim(); } catch { try { changed = sh("git", ["show", "--name-status", "--oneline", "-1", "HEAD"], { cwd: repoDir }).trim(); } catch {} }
     const filesBlock = changed ? "```\n" + changed.slice(0, 1500) + "\n```" : "_(diff summary unavailable)_";
     await postStickyComment(prNumber, "dark-factory:coding",
-      `### ✅ 🤖 Coding complete (engine: ${ENGINE})\n\nImplemented the change for issue #${ISSUE} on \`${BRANCH}\` in a hardware-isolated Kata micro-VM.\n\n**Files changed:**\n${filesBlock}`);
+      `### ✅ 🤖 Coding complete (engine: ${ENGINE})\n\nImplemented the change for issue #${ISSUE} on \`${BRANCH}\` in a hardware-isolated ${SUBSTRATE}.\n\n**Files changed:**\n${filesBlock}`);
     await postStickyComment(prNumber, "dark-factory:local-test",
       `### ${test.green ? "✅" : "❌"} 🧪 Local testing (in-VM, before PR)\n\n**${test.green ? "Build + unit tests passed" : "Tests NOT green"}** — discovered from the repo's own marker files (no central config).\n\n${test.summary ? "```\n" + String(test.summary).slice(0, 800) + "\n```" : ""}`);
 

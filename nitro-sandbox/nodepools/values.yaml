@@ -1,0 +1,34 @@
+# PLACEHOLDERS, do not edit. `task nitro` overrides both from terraform outputs
+# (cluster_name, auto_mode_node_role) as ArgoCD helm parameters, the same way
+# kata/nodepools gets its values.
+clusterName: SET-BY-TASK-NITRO
+nodeRole: SET-BY-TASK-NITRO
+
+# Name of the NodeClass and the NodePool. Change it only if your cluster already
+# has a NodeClass or NodePool with this name (some hand-built preview clusters
+# do): ArgoCD would otherwise take over the existing object.
+name: nitro-sandbox
+
+# Instance types Auto Mode labels eks.amazonaws.com/nitro-sandbox=true. The label
+# comes from the instance type, not from anything in the NodeClass, so a sandbox
+# pod never matches a node of a type outside this list. Measured 2026-10-05 on
+# Auto Mode (Bottlerocket 2026.9.30):
+#   m7i.xlarge   label true, 20 slots, and all 20 booted at once
+#   m8i.xlarge   label true, 20 slots, sandboxes boot (four tested at once)
+#   m8i.4xlarge  label FALSE on the same cluster, so it is not listed
+# Add a type only after checking that a node of that type comes up with the
+# label and a non-zero eks.amazonaws.com/nitro-sandbox allocatable.
+instanceTypes:
+  - m7i.xlarge
+  - m8i.xlarge
+capacityTypes: ["on-demand"]
+# Upper bound for the whole pool. 64 vCPU is 16 xlarge nodes, so about 48
+# sandboxes at cpu: "1" each.
+cpuLimit: 64
+# Scale an EMPTY node away after this long. Underutilized consolidation is off on
+# purpose: it would move a running sandbox to repack nodes, which restarts the
+# agent's microVM mid-task.
+consolidateAfter: 10m
+# Data volume for images, the EROFS image cache and every sandbox's writable
+# overlay (each sandbox's limits.ephemeral-storage comes out of this).
+ephemeralStorage: 80Gi

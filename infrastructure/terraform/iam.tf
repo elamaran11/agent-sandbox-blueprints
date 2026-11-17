@@ -61,11 +61,18 @@ resource "aws_iam_role_policy" "llm_gateway_bedrock" {
         "bedrock:InvokeModel",
         "bedrock:InvokeModelWithResponseStream",
       ]
-      # Scoped to Anthropic foundation models and the cross-region inference
-      # profiles the agent uses. Widen deliberately if you switch model families.
+      # Scoped to the two model families the pipeline calls, foundation models
+      # and their cross-region inference profiles: Anthropic for the coder, and
+      # Amazon Nova for the holdout judge (holdout.judgeModel, deliberately a
+      # different family from the coder). Without Nova every judge call is
+      # AccessDenied, which the gate reads as "no", so holdout fails 0/N on
+      # code whose hidden tests all pass. Widen deliberately if you switch
+      # model families.
       Resource = [
         "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/anthropic.*",
         "arn:${data.aws_partition.current.partition}:bedrock:*:${local.account_id}:inference-profile/us.anthropic.*",
+        "arn:${data.aws_partition.current.partition}:bedrock:*::foundation-model/amazon.nova-*",
+        "arn:${data.aws_partition.current.partition}:bedrock:*:${local.account_id}:inference-profile/us.amazon.nova-*",
       ]
     }]
   })

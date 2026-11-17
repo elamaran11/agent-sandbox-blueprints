@@ -1,0 +1,34 @@
+# The isolated-sandbox and confidential-sandbox RuntimeClasses. Wave 1, after the
+# NodePool whose taint they tolerate. On a preview cluster that already has them,
+# ArgoCD adopts the existing objects and adds the toleration.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nitro-sandbox-runtimeclasses
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${GITOPS_REPO_URL}
+    targetRevision: ${GITOPS_REVISION}
+    path: nitro-sandbox/runtimeclasses
+  destination:
+    name: ${DESTINATION_CLUSTER}
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
