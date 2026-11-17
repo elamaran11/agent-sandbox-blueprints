@@ -31,7 +31,7 @@ experience:
 |---|---|---|
 | **Kata micro-VM** | Hardware-isolated pods on nested-virt EKS nodes — your own kernel per sandbox, three hypervisors (Cloud Hypervisor, QEMU, Firecracker) | Production-ready today; long-lived workspaces; GPU (via QEMU) |
 | **AWS Lambda MicroVM** | Serverless Firecracker VMs provisioned on demand, suspended while idle, terminated at merge | Bursty agent work; scale-to-zero economics; no node pool to operate |
-| **Nitro Sandbox** *(private preview)* | EKS Pod Isolation: every sandbox pod boots its own microVM on a Nitro-isolated slice of an Auto Mode node, selected with one RuntimeClass | Kata's `kubectl`-native workflow without nested virtualization or a runtime to install |
+| **Nitro Sandbox** | EKS Pod Isolation: every sandbox pod boots its own microVM on a Nitro-isolated slice of an Auto Mode node, selected with one RuntimeClass | Kata's `kubectl`-native workflow without nested virtualization or a runtime to install |
 
 Pick one, or run them side by side. **The pipeline, review gates, and UX are identical.** The only
 difference is a label on the GitHub issue.
