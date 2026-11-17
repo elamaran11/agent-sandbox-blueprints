@@ -4,7 +4,7 @@ The same pipeline as the Kata example, with the agent running in its **own Nitro
 microVM** on an EKS Auto Mode node. No nested virtualization, and no runtime installed on
 the node.
 
-**Prerequisites:** `task up` with `enable_auto_mode = true`, then `task nitro` (see
+**Prerequisites:** `task up` with `enable_auto_mode = true` (plus `cluster_created_without_auto_mode = true` if the cluster already exists), then `task nitro` (see
 [`../../nitro-sandbox/README.md`](../../nitro-sandbox/README.md)), and a **throwaway**
 GitHub repo to point this at.
 

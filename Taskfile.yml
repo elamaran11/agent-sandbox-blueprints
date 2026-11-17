@@ -97,7 +97,29 @@ tasks:
     dir: "{{.TF_DIR}}"
     cmds:
       - terraform init -upgrade
-      - terraform apply -var-file=terraform.tfvars -auto-approve
+      - |
+        set -euo pipefail
+        # Plan first and refuse to auto-approve anything that would destroy the
+        # EKS cluster. The classic way to hit it: setting enable_auto_mode = true
+        # on a cluster that already exists without cluster_created_without_auto_mode
+        # = true, which plans a REPLACEMENT (bootstrap_self_managed_addons forces a
+        # new cluster). Creating a cluster is fine; only delete/replace stops here.
+        terraform plan -var-file=terraform.tfvars -out=tfplan -input=false
+        if terraform show -json tfplan | python3 -c '
+        import json, sys
+        bad = [r["address"] for r in json.load(sys.stdin).get("resource_changes", [])
+               if r["type"] == "aws_eks_cluster" and "delete" in r["change"]["actions"]]
+        print("\n".join(bad)); sys.exit(1 if bad else 0)'; then
+          terraform apply -input=false tfplan
+          rm -f tfplan
+        else
+          rm -f tfplan
+          echo "ERROR: this plan would DESTROY the EKS cluster (listed above). Nothing was applied."
+          echo "       Turning on enable_auto_mode for an existing cluster? Also set"
+          echo "       cluster_created_without_auto_mode = true in terraform.tfvars, then re-run."
+          echo "       To replace the cluster on purpose, run terraform apply yourself."
+          exit 1
+        fi
 
   kubeconfig:
     desc: Write kubeconfig for the new cluster
@@ -184,6 +206,7 @@ tasks:
         if [ -z "$ROLE" ]; then
           echo "ERROR: no EKS Auto Mode node role in the terraform outputs."
           echo "       Set enable_auto_mode = true in terraform.tfvars, then: task tf:apply"
+          echo "       (cluster already exists? also set cluster_created_without_auto_mode = true)"
           echo "       Your account must also be enabled for the EKS Pod Isolation preview."
           exit 1
         fi

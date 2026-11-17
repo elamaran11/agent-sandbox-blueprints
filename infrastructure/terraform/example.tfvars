@@ -46,7 +46,8 @@ gitops_target_revision = "main"
 # enabled for the EKS Pod Isolation preview. Off by default; Kata and Lambda
 # MicroVM do not use it.
 # enable_auto_mode = true
-# Only when turning it on for a cluster that already exists without it:
+# REQUIRED when turning it on for a cluster that already exists without it,
+# or the plan replaces the cluster (task tf:apply refuses that plan):
 # cluster_created_without_auto_mode = true
 
 # Extra IAM roles granted cluster-admin (the identity running terraform always is).

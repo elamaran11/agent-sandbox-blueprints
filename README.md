@@ -137,7 +137,7 @@ task nitro       # Auto Mode NodePool + pod isolation RuntimeClasses + sandbox t
 ```
 
 `task nitro` needs `enable_auto_mode = true` in `terraform.tfvars` and an account enabled
-for the EKS Pod Isolation preview. See [nitro-sandbox/README.md](nitro-sandbox/README.md).
+for the EKS Pod Isolation preview. On a cluster that already exists, also set `cluster_created_without_auto_mode = true`, or the plan replaces the cluster (`task tf:apply` refuses such a plan). See [nitro-sandbox/README.md](nitro-sandbox/README.md).
 
 ### 4 — Run the Dark Factory
 

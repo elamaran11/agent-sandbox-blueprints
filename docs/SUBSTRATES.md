@@ -202,7 +202,7 @@ agent-sandbox v0.5.4):
 
 | # | Gotcha | Fix |
 | --- | --- | --- |
-| 1 | Pod isolation nodes are Auto Mode nodes; the blueprint cluster is not Auto Mode | `enable_auto_mode = true` in Terraform (Auto Mode compute, block storage and load balancing, no built-in node pools) |
+| 1 | Pod isolation nodes are Auto Mode nodes; the blueprint cluster is not Auto Mode | `enable_auto_mode = true` in Terraform, plus `cluster_created_without_auto_mode = true` if the cluster already exists (Auto Mode compute, block storage and load balancing, no built-in node pools) |
 | 2 | A custom Auto Mode NodeClass's nodes never join without an access entry | `auto-mode.tf`: EC2 access entry with `AmazonEKSAutoNodePolicy` for the node role |
 | 3 | The microVM is sized from requests; limits above them are unreachable | coder requests `cpu: "1"`, `memory: 4Gi`, memory limit equal; `ephemeral-storage` limit `10Gi` sizes the overlay holding `/workspace` |
 | 4 | 20 sandbox slots per `m7i.xlarge`, all of them real. CPU limits above requests are unreachable (requests size the microVM) | the coder requests `cpu: "1"`, which is also the limit, so three coders fit the node |

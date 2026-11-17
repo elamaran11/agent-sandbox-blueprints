@@ -24,7 +24,7 @@ task lint                      # fmt, validate, secret scan
 task up                        # bring up a cluster to test against
 task kata      # and/or        # install a substrate
 task lambda
-task nitro                     # needs enable_auto_mode = true
+task nitro                     # needs enable_auto_mode = true (+ cluster_created_without_auto_mode = true on an existing cluster)
 task demo-kata # and/or        # run a pipeline end to end
 task demo-lambda
 task demo-nitro

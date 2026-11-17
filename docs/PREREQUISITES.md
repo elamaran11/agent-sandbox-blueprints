@@ -40,6 +40,7 @@ which flag to flip.
 The Nitro Sandbox substrate needs an account that AWS has enabled for the EKS Pod
 Isolation private preview. No API call or Terraform setting requests that. It also needs
 EKS Auto Mode on the cluster, which Terraform turns on with `enable_auto_mode = true`.
+On a cluster that already exists, also set `cluster_created_without_auto_mode = true`, or the plan replaces the cluster (`task tf:apply` refuses such a plan).
 That switches on Auto Mode compute, block storage and load balancing together (EKS
 enables the three as a set), with no built-in node pools; Kata and Lambda MicroVM do not
 use it.

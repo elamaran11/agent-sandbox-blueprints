@@ -170,7 +170,7 @@ variable "enable_auto_mode" {
 }
 
 variable "cluster_created_without_auto_mode" {
-  description = "Set true only when turning enable_auto_mode on for a cluster that was first created with it off. EKS created that cluster with bootstrapSelfManagedAddons=true, and changing that setting replaces the cluster; true keeps the switch an in-place update. Leave false for a cluster created with Auto Mode on, since EKS rejects true at creation."
+  description = "Set true only when turning enable_auto_mode on for a cluster that was first created with it off. EKS created that cluster with bootstrapSelfManagedAddons=true, and changing that setting replaces the cluster; true keeps the switch an in-place update. Leave false for a cluster created with Auto Mode on, since EKS rejects true at creation. Set it once and never flip it: changing it later replaces the cluster, and it also moves vpc-cni and kube-proxy across the module's before/after-compute split, which re-creates both add-ons. task tf:apply refuses any plan that would destroy the cluster."
   type        = bool
   default     = false
 }

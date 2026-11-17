@@ -41,6 +41,7 @@ Symptom → cause → fix, for the failures that actually happen. Ordered by lay
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `task tf:apply` stops: "this plan would DESTROY the EKS cluster" | `enable_auto_mode = true` on a cluster that existed before, without `cluster_created_without_auto_mode = true` | Set `cluster_created_without_auto_mode = true`, re-run, and check the plan shows the cluster updated in place |
 | `task nitro` stops: no EKS Auto Mode node role | Terraform ran without Auto Mode | `enable_auto_mode = true` in `terraform.tfvars`, then `task tf:apply` |
 | Sandbox pod `Pending`, Auto Mode launches nothing | The `nitro-sandbox` NodeClass is not Ready, or the account is not enabled for the preview | `kubectl get nodeclass,nodepool nitro-sandbox`; a capable node carries `eks.amazonaws.com/nitro-sandbox=true` and a non-zero `eks.amazonaws.com/nitro-sandbox` allocatable |
 | Pod rejected: `RuntimeClass "isolated_sandbox" not found` | The preview guide spells the names with underscores | Use hyphens: `isolated-sandbox`, `confidential-sandbox` |
